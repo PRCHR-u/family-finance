@@ -33,9 +33,12 @@ from .models import (
 from .schemas import (
     AuditLogPage,
     AuditLogRead,
+    BudgetSummaryResponse,
     ChangePasswordRequest,
     CreditCardCreate,
     CreditCardRead,
+    DailyBudgetResponse,
+    DebtChangeAnalysis,
     DebtCreate,
     DebtRead,
     DebtRepaymentCreate,
@@ -53,6 +56,7 @@ from .schemas import (
     UserAdminUpdate,
     UserCreate,
     UserRead,
+    WeeklyBudgetResponse,
 )
 
 app = FastAPI(title="Family Finance API")
@@ -848,6 +852,104 @@ def debt_summary(
         total_mandatory_expense=sum(item.mandatory_expense for item in records),
         total_urgent_creditcard_repayment=sum(item.urgent_creditcard_repayment for item in records),
     )
+
+
+# ==================== BUDGET ANALYSIS ENDPOINTS ====================
+
+@app.get("/analytics/debt-change", response_model=DebtChangeAnalysis)
+def analyze_debt_change(
+    period_from: date,
+    period_to: date,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Анализирует прирост и уменьшение долга за указанный период.
+    
+    Возвращает детальную информацию:
+    - Долг на начало и конец периода
+    - Новые долги, созданные в периоде
+    - Платежи по долгам в периоде
+    - Чистое изменение долга
+    """
+    from .budget_utils import get_debt_change_analysis
+    
+    if period_from > period_to:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Неверный диапазон дат.")
+    
+    result = get_debt_change_analysis(db, current_user, period_from, period_to)
+    return result
+
+
+@app.get("/analytics/weekly-budget", response_model=WeeklyBudgetResponse)
+def get_weekly_budget(
+    reference_date: date | None = Query(default=None),
+    weeks_ahead: int = Query(default=1, ge=1, le=12),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Рассчитывает недельный бюджет на основе анализа расходов.
+    
+    Параметры:
+    - reference_date: дата начала периода (по умолчанию сегодня)
+    - weeks_ahead: количество недель для планирования (1-12)
+    
+    Возвращает:
+    - Общий бюджет на неделю
+    - Средний дневной бюджет
+    - Обязательные расходы
+    - Доходы за период
+    - Рекомендации по бюджету
+    """
+    from .budget_utils import calculate_weekly_budget
+    
+    result = calculate_weekly_budget(db, current_user, reference_date, weeks_ahead)
+    return result
+
+
+@app.get("/analytics/daily-budget", response_model=DailyBudgetResponse)
+def get_daily_budget(
+    target_date: date | None = Query(default=None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Рассчитывает ежедневный бюджет на конкретный день (по запросу).
+    
+    Параметры:
+    - target_date: дата расчета (по умолчанию сегодня)
+    
+    Возвращает:
+    - Обязательные расходы на день
+    - Дискреционный бюджет (на необязательные траты)
+    - Рекомендации
+    """
+    from .budget_utils import calculate_daily_budget
+    
+    result = calculate_daily_budget(db, current_user, target_date)
+    return result
+
+
+@app.get("/analytics/budget-summary", response_model=BudgetSummaryResponse)
+def get_budget_summary_endpoint(
+    period_from: date,
+    period_to: date,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Сводная информация о бюджете за период с анализом долгов.
+    
+    Объединяет анализ изменения долгов и бюджетирование.
+    """
+    from .budget_utils import get_budget_summary
+    
+    if period_from > period_to:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Неверный диапазон дат.")
+    
+    result = get_budget_summary(db, current_user, period_from, period_to)
+    return result
 
 
 @app.post("/imports/excel", response_model=ImportResult)
