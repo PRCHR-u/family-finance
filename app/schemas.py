@@ -225,3 +225,52 @@ class DebtSummary(BaseModel):
     total_income: float
     total_mandatory_expense: float
     total_urgent_creditcard_repayment: float
+
+
+# ==================== BUDGET ANALYSIS SCHEMAS ====================
+
+class DebtChangeAnalysis(BaseModel):
+    """Схема для анализа изменения долгов."""
+    period_from: date
+    period_to: date
+    opening_debt: float
+    closing_debt: float
+    debt_change: float
+    new_debts: list[dict]
+    repayments: list[dict]
+    debt_increase: float
+    debt_decrease: float
+    net_change: float
+
+
+class WeeklyBudgetResponse(BaseModel):
+    """Схема для недельного бюджета."""
+    period_start: date
+    period_end: date
+    weeks_count: int
+    weekly_budget: float
+    daily_budget: float
+    mandatory_expenses: dict
+    planned_expenses: dict
+    income: dict
+    available_income: float
+    balance: float
+    recommendation: str
+
+
+class DailyBudgetResponse(BaseModel):
+    """Схема для ежедневного бюджета."""
+    date: date
+    mandatory_expenses: dict
+    base_daily_budget: float
+    discretionary_budget: float
+    total_budget: float
+    recommendations: list[str]
+
+
+class BudgetSummaryResponse(BaseModel):
+    """Сводная схема бюджета."""
+    period: dict
+    debt_analysis: dict
+    budget_overview: dict
+    financial_health: dict
