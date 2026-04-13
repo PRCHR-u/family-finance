@@ -1,1 +1,14 @@
-Nothing should be ignored since only a README.md file was modified and no build artifacts, dependencies, or temporary files were detected in the changes.
+```
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Logs
+*.log
+server_test.log
+
+# Database
+family_finance.db
+```

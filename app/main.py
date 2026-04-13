@@ -17,7 +17,9 @@ from .database import Base, SessionLocal, engine, get_db
 from .models import (
     AuditLog,
     CreditCard,
+    CreditCardIssuer,
     CreditCardStatus,
+    Creditor,
     Debt,
     DebtRepayment,
     DebtStatus,
@@ -36,7 +38,13 @@ from .schemas import (
     BudgetSummaryResponse,
     ChangePasswordRequest,
     CreditCardCreate,
+    CreditCardIssuerCreate,
+    CreditCardIssuerRead,
+    CreditCardIssuerUpdate,
     CreditCardRead,
+    CreditorCreate,
+    CreditorRead,
+    CreditorUpdate,
     DailyBudgetResponse,
     DebtChangeAnalysis,
     DebtCreate,
@@ -1314,6 +1322,29 @@ def approve_expense(expense_id: int, db: Session = Depends(get_db), admin: User 
         "expenses.approve",
         actor_user_id=admin.id,
         target_user_id=expense.user_id,
+        details=f"expense_id={expense.id}, is_completed={expense.is_completed}",
+    )
+    db.commit()
+    db.refresh(expense)
+    return expense
+
+
+@app.post("/expenses/{expense_id}/reject", response_model=ExpenseRead)
+def reject_expense(expense_id: int, db: Session = Depends(get_db), admin: User = Depends(require_admin)):
+    """Отклонить изменение статуса расхода."""
+    expense = db.scalar(select(Expense).where(Expense.id == expense_id))
+    if not expense:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Расход не найден.")
+    expense.moderation_status = RecordStatus.REJECTED
+    expense.approved_by_id = admin.id
+    expense.approved_at = datetime.utcnow()
+    # Откат изменения is_completed при отклонении
+    expense.is_completed = False
+    _log_action(
+        db,
+        "expenses.reject",
+        actor_user_id=admin.id,
+        target_user_id=expense.user_id,
         details=f"expense_id={expense.id}",
     )
     db.commit()
@@ -1323,12 +1354,26 @@ def approve_expense(expense_id: int, db: Session = Depends(get_db), admin: User 
 
 @app.post("/expenses/{expense_id}/complete", response_model=ExpenseRead)
 def complete_expense(expense_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """Отметить расход как выполненный (требует подтверждения администратором)."""
     expense = db.scalar(select(Expense).where(Expense.id == expense_id))
     if not expense:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Расход не найден.")
     if current_user.role != UserRole.ADMIN and expense.user_id != current_user.id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Нет доступа.")
+    
+    # Изменение статуса требует модерации
     expense.is_completed = True
+    expense.moderation_status = RecordStatus.PENDING
+    expense.approved_by_id = None
+    expense.approved_at = None
+    
+    _log_action(
+        db,
+        "expenses.complete",
+        actor_user_id=current_user.id,
+        target_user_id=expense.user_id,
+        details=f"expense_id={expense_id}",
+    )
     db.commit()
     db.refresh(expense)
     return expense
@@ -1489,6 +1534,198 @@ def export_audit_logs_csv(
 
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+
+# ==================== DICTIONARY ENDPOINTS (CREDITORS) ====================
+
+@app.post("/creditors", response_model=CreditorRead, status_code=status.HTTP_201_CREATED)
+def create_creditor(
+    payload: CreditorCreate,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin),
+):
+    """Создать запись в справочнике кредиторов."""
+    existing = db.scalar(select(Creditor).where(Creditor.name == payload.name))
+    if existing:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Кредитор с таким именем уже существует.")
+    creditor = Creditor(**payload.model_dump())
+    db.add(creditor)
+    db.flush()
+    _log_action(
+        db,
+        "creditors.create",
+        actor_user_id=admin.id,
+        target_user_id=None,
+        details=f"creditor_id={creditor.id}, name={creditor.name}",
+    )
+    db.commit()
+    db.refresh(creditor)
+    return creditor
+
+
+@app.get("/creditors", response_model=list[CreditorRead])
+def list_creditors(
+    db: Session = Depends(get_db),
+    is_active: bool | None = Query(default=None),
+):
+    """Получить список кредиторов."""
+    stmt = select(Creditor)
+    if is_active is not None:
+        stmt = stmt.where(Creditor.is_active == is_active)
+    return db.scalars(stmt.order_by(Creditor.name.asc())).all()
+
+
+@app.patch("/creditors/{creditor_id}", response_model=CreditorRead)
+def update_creditor(
+    creditor_id: int,
+    payload: CreditorUpdate,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin),
+):
+    """Обновить запись в справочнике кредиторов."""
+    creditor = db.scalar(select(Creditor).where(Creditor.id == creditor_id))
+    if not creditor:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Кредитор не найден.")
+    
+    updates = payload.model_dump(exclude_unset=True)
+    if not updates:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Нет данных для обновления.")
+    
+    if "name" in updates:
+        existing = db.scalar(select(Creditor).where(Creditor.name == updates["name"], Creditor.id != creditor.id))
+        if existing:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Кредитор с таким именем уже существует.")
+        creditor.name = updates["name"]
+    if "description" in updates:
+        creditor.description = updates["description"]
+    if "is_active" in updates:
+        creditor.is_active = updates["is_active"]
+    
+    _log_action(
+        db,
+        "creditors.update",
+        actor_user_id=admin.id,
+        target_user_id=None,
+        details=f"creditor_id={creditor.id}, fields={','.join(updates.keys())}",
+    )
+    db.commit()
+    db.refresh(creditor)
+    return creditor
+
+
+@app.delete("/creditors/{creditor_id}")
+def delete_creditor(creditor_id: int, db: Session = Depends(get_db), admin: User = Depends(require_admin)):
+    """Удалить запись из справочника кредиторов."""
+    creditor = db.scalar(select(Creditor).where(Creditor.id == creditor_id))
+    if not creditor:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Кредитор не найден.")
+    
+    _log_action(
+        db,
+        "creditors.delete",
+        actor_user_id=admin.id,
+        target_user_id=None,
+        details=f"creditor_id={creditor_id}, name={creditor.name}",
+    )
+    db.delete(creditor)
+    db.commit()
+    return {"message": "Кредитор удалён."}
+
+
+# ==================== DICTIONARY ENDPOINTS (CREDIT CARD ISSUERS) ====================
+
+@app.post("/credit-card-issuers", response_model=CreditCardIssuerRead, status_code=status.HTTP_201_CREATED)
+def create_credit_card_issuer(
+    payload: CreditCardIssuerCreate,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin),
+):
+    """Создать запись в справочнике эмитентов кредитных карт."""
+    existing = db.scalar(select(CreditCardIssuer).where(CreditCardIssuer.name == payload.name))
+    if existing:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Эмитент с таким именем уже существует.")
+    issuer = CreditCardIssuer(**payload.model_dump())
+    db.add(issuer)
+    db.flush()
+    _log_action(
+        db,
+        "credit_card_issuers.create",
+        actor_user_id=admin.id,
+        target_user_id=None,
+        details=f"issuer_id={issuer.id}, name={issuer.name}",
+    )
+    db.commit()
+    db.refresh(issuer)
+    return issuer
+
+
+@app.get("/credit-card-issuers", response_model=list[CreditCardIssuerRead])
+def list_credit_card_issuers(
+    db: Session = Depends(get_db),
+    is_active: bool | None = Query(default=None),
+):
+    """Получить список эмитентов кредитных карт."""
+    stmt = select(CreditCardIssuer)
+    if is_active is not None:
+        stmt = stmt.where(CreditCardIssuer.is_active == is_active)
+    return db.scalars(stmt.order_by(CreditCardIssuer.name.asc())).all()
+
+
+@app.patch("/credit-card-issuers/{issuer_id}", response_model=CreditCardIssuerRead)
+def update_credit_card_issuer(
+    issuer_id: int,
+    payload: CreditCardIssuerUpdate,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin),
+):
+    """Обновить запись в справочнике эмитентов кредитных карт."""
+    issuer = db.scalar(select(CreditCardIssuer).where(CreditCardIssuer.id == issuer_id))
+    if not issuer:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Эмитент не найден.")
+    
+    updates = payload.model_dump(exclude_unset=True)
+    if not updates:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Нет данных для обновления.")
+    
+    if "name" in updates:
+        existing = db.scalar(select(CreditCardIssuer).where(CreditCardIssuer.name == updates["name"], CreditCardIssuer.id != issuer.id))
+        if existing:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Эмитент с таким именем уже существует.")
+        issuer.name = updates["name"]
+    if "description" in updates:
+        issuer.description = updates["description"]
+    if "is_active" in updates:
+        issuer.is_active = updates["is_active"]
+    
+    _log_action(
+        db,
+        "credit_card_issuers.update",
+        actor_user_id=admin.id,
+        target_user_id=None,
+        details=f"issuer_id={issuer.id}, fields={','.join(updates.keys())}",
+    )
+    db.commit()
+    db.refresh(issuer)
+    return issuer
+
+
+@app.delete("/credit-card-issuers/{issuer_id}")
+def delete_credit_card_issuer(issuer_id: int, db: Session = Depends(get_db), admin: User = Depends(require_admin)):
+    """Удалить запись из справочника эмитентов кредитных карт."""
+    issuer = db.scalar(select(CreditCardIssuer).where(CreditCardIssuer.id == issuer_id))
+    if not issuer:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Эмитент не найден.")
+    
+    _log_action(
+        db,
+        "credit_card_issuers.delete",
+        actor_user_id=admin.id,
+        target_user_id=None,
+        details=f"issuer_id={issuer_id}, name={issuer.name}",
+    )
+    db.delete(issuer)
+    db.commit()
+    return {"message": "Эмитент удалён."}
 
 
 @app.get("/")
