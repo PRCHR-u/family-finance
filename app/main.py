@@ -353,6 +353,201 @@ def change_password(
     return {"message": "Пароль обновлен."}
 
 
+@app.post("/debts", response_model=DebtRead, status_code=status.HTTP_201_CREATED)
+def create_debt(
+    payload: DebtCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    moderation_status = RecordStatus.APPROVED if current_user.role == UserRole.ADMIN else RecordStatus.PENDING
+    debt = Debt(
+        user_id=current_user.id,
+        current_balance=payload.principal_amount,
+        moderation_status=moderation_status,
+        approved_by_id=current_user.id if moderation_status == RecordStatus.APPROVED else None,
+        approved_at=datetime.utcnow() if moderation_status == RecordStatus.APPROVED else None,
+        **payload.model_dump(),
+    )
+    db.add(debt)
+    db.flush()
+    _log_action(
+        db,
+        "debts.create",
+        actor_user_id=current_user.id,
+        target_user_id=debt.user_id,
+        details=f"debt_id={debt.id}, creditor={debt.creditor_name}",
+    )
+    db.commit()
+    db.refresh(debt)
+    return debt
+
+
+@app.get("/debts", response_model=list[DebtRead])
+def list_debts(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    user_id: int | None = Query(default=None),
+    debt_status: DebtStatus | None = Query(default=None, alias="status"),
+    moderation_status: RecordStatus | None = Query(default=None),
+):
+    stmt = select(Debt)
+    if current_user.role != UserRole.ADMIN:
+        stmt = stmt.where(Debt.user_id == current_user.id)
+    elif user_id is not None:
+        stmt = stmt.where(Debt.user_id == user_id)
+    if debt_status is not None:
+        stmt = stmt.where(Debt.status == debt_status)
+    if moderation_status is not None:
+        stmt = stmt.where(Debt.moderation_status == moderation_status)
+    return db.scalars(stmt.order_by(Debt.start_date.desc(), Debt.id.desc())).all()
+
+
+@app.post("/debts/{debt_id}/approve", response_model=DebtRead)
+def approve_debt(debt_id: int, db: Session = Depends(get_db), admin: User = Depends(require_admin)):
+    debt = db.scalar(select(Debt).where(Debt.id == debt_id))
+    if not debt:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Долг не найден.")
+    debt.moderation_status = RecordStatus.APPROVED
+    debt.approved_by_id = admin.id
+    debt.approved_at = datetime.utcnow()
+    _log_action(
+        db,
+        "debts.approve",
+        actor_user_id=admin.id,
+        target_user_id=debt.user_id,
+        details=f"debt_id={debt.id}",
+    )
+    db.commit()
+    db.refresh(debt)
+    return debt
+
+
+@app.post("/debts/{debt_id}/reject", response_model=DebtRead)
+def reject_debt(debt_id: int, db: Session = Depends(get_db), admin: User = Depends(require_admin)):
+    debt = db.scalar(select(Debt).where(Debt.id == debt_id))
+    if not debt:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Долг не найден.")
+    debt.moderation_status = RecordStatus.REJECTED
+    debt.approved_by_id = None
+    debt.approved_at = None
+    _log_action(
+        db,
+        "debts.reject",
+        actor_user_id=admin.id,
+        target_user_id=debt.user_id,
+        details=f"debt_id={debt.id}",
+    )
+    db.commit()
+    db.refresh(debt)
+    return debt
+
+
+@app.post("/debts/{debt_id}/repayments", response_model=DebtRepaymentRead, status_code=status.HTTP_201_CREATED)
+def create_debt_repayment(
+    debt_id: int,
+    payload: DebtRepaymentCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    debt = db.scalar(select(Debt).where(Debt.id == debt_id))
+    if not debt:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Долг не найден.")
+    if current_user.role != UserRole.ADMIN and debt.user_id != current_user.id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Нельзя добавлять платеж к чужому долгу.")
+
+    moderation_status = RecordStatus.APPROVED if current_user.role == UserRole.ADMIN else RecordStatus.PENDING
+    repayment = DebtRepayment(
+        debt_id=debt.id,
+        user_id=current_user.id,
+        moderation_status=moderation_status,
+        approved_by_id=current_user.id if moderation_status == RecordStatus.APPROVED else None,
+        approved_at=datetime.utcnow() if moderation_status == RecordStatus.APPROVED else None,
+        **payload.model_dump(),
+    )
+    db.add(repayment)
+    if moderation_status == RecordStatus.APPROVED:
+        _recalculate_debt_balance(db, debt)
+    db.flush()
+    _log_action(
+        db,
+        "debts.repayment.create",
+        actor_user_id=current_user.id,
+        target_user_id=debt.user_id,
+        details=f"debt_id={debt.id}, repayment_id={repayment.id}, amount={repayment.amount}",
+    )
+    db.commit()
+    db.refresh(repayment)
+    return repayment
+
+
+@app.get("/debts/{debt_id}/repayments", response_model=list[DebtRepaymentRead])
+def list_debt_repayments(
+    debt_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    debt = db.scalar(select(Debt).where(Debt.id == debt_id))
+    if not debt:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Долг не найден.")
+    if current_user.role != UserRole.ADMIN and debt.user_id != current_user.id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Нельзя просматривать чужой долг.")
+    stmt = select(DebtRepayment).where(DebtRepayment.debt_id == debt_id)
+    return db.scalars(stmt.order_by(DebtRepayment.payment_date.asc(), DebtRepayment.id.asc())).all()
+
+
+@app.post("/repayments/{repayment_id}/approve", response_model=DebtRepaymentRead)
+def approve_repayment(
+    repayment_id: int,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin),
+):
+    repayment = db.scalar(select(DebtRepayment).where(DebtRepayment.id == repayment_id))
+    if not repayment:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Погашение не найдено.")
+    debt = db.scalar(select(Debt).where(Debt.id == repayment.debt_id))
+    if not debt:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Долг не найден.")
+    repayment.moderation_status = RecordStatus.APPROVED
+    repayment.approved_by_id = admin.id
+    repayment.approved_at = datetime.utcnow()
+    _recalculate_debt_balance(db, debt)
+    _log_action(
+        db,
+        "debts.repayment.approve",
+        actor_user_id=admin.id,
+        target_user_id=debt.user_id,
+        details=f"debt_id={debt.id}, repayment_id={repayment.id}",
+    )
+    db.commit()
+    db.refresh(repayment)
+    return repayment
+
+
+@app.post("/repayments/{repayment_id}/reject", response_model=DebtRepaymentRead)
+def reject_repayment(
+    repayment_id: int,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin),
+):
+    repayment = db.scalar(select(DebtRepayment).where(DebtRepayment.id == repayment_id))
+    if not repayment:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Погашение не найдено.")
+    debt = db.scalar(select(Debt).where(Debt.id == repayment.debt_id))
+    repayment.moderation_status = RecordStatus.REJECTED
+    repayment.approved_by_id = None
+    repayment.approved_at = None
+    _log_action(
+        db,
+        "debts.repayment.reject",
+        actor_user_id=admin.id,
+        target_user_id=debt.user_id if debt else None,
+        details=f"repayment_id={repayment.id}",
+    )
+    db.commit()
+    db.refresh(repayment)
+    return repayment
+
+
 @app.post("/records", response_model=FinanceRecordRead, status_code=status.HTTP_201_CREATED)
 def create_record(
     payload: FinanceRecordCreate,
@@ -469,30 +664,35 @@ def debt_summary(
 ):
     if period_from > period_to:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Неверный диапазон дат.")
-    stmt = select(FinanceRecord).where(
+
+    day_before = period_from.fromordinal(period_from.toordinal() - 1)
+    opening_debt = _debt_total_as_of(db, current_user, day_before)
+    closing_debt = _debt_total_as_of(db, current_user, period_to)
+
+    finance_stmt = select(FinanceRecord).where(
         FinanceRecord.status == RecordStatus.APPROVED,
         FinanceRecord.period_date >= period_from,
         FinanceRecord.period_date <= period_to,
     )
     if current_user.role != UserRole.ADMIN:
-        stmt = stmt.where(FinanceRecord.user_id == current_user.id)
-    records = db.scalars(stmt.order_by(FinanceRecord.period_date.asc(), FinanceRecord.id.asc())).all()
+        finance_stmt = finance_stmt.where(FinanceRecord.user_id == current_user.id)
+    records = db.scalars(
+        finance_stmt.order_by(FinanceRecord.period_date.asc(), FinanceRecord.id.asc())
+    ).all()
 
     if not records:
         return DebtSummary(
             period_from=period_from,
             period_to=period_to,
             records_count=0,
-            opening_debt=0.0,
-            closing_debt=0.0,
-            debt_change=0.0,
+            opening_debt=opening_debt,
+            closing_debt=closing_debt,
+            debt_change=closing_debt - opening_debt,
             total_income=0.0,
             total_mandatory_expense=0.0,
             total_urgent_creditcard_repayment=0.0,
         )
 
-    opening_debt = records[0].debt_total
-    closing_debt = records[-1].debt_total
     return DebtSummary(
         period_from=period_from,
         period_to=period_to,
