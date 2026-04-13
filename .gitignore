@@ -4,31 +4,20 @@ __pycache__/
 *.pyc
 *.pyo
 *.pyd
-.Python
-env/
-.venv/
-venv/
-pip-log.txt
-pip-delete-this-directory.txt
-.pytest_cache/
-.mypy_cache/
-.coverage
-htmlcov/
+
+# Database
+family_finance.db
 
 # Logs
 *.log
+server.log
 
 # Environment
 .env
 .env.local
-.env.*
+*.env.*
 
-# Docker
-Dockerfile
-docker-compose.yml
-deploy.sh
-
-# OS
-.DS_Store
-Thumbs.db
+# Dependencies
+venv/
+.venv/
 ```

@@ -1,0 +1,38 @@
+version: '3.8'
+
+services:
+  app:
+    build: .
+    container_name: family-finance
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    volumes:
+      # Сохранение базы данных и логов между перезапусками
+      - family-finance-data:/app/data
+      - ./logs:/app/logs
+    environment:
+      # КРИТИЧЕСКИ ВАЖНО: Замените на надежный ключ!
+      - SECRET_KEY=${SECRET_KEY:-change-this-secret-key-in-production}
+      - DATABASE_URL=sqlite:///./data/family_finance.db
+      - ACCESS_TOKEN_EXPIRE_MINUTES=30
+      - ADMIN_EMAIL=${ADMIN_EMAIL:-admin@example.com}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-ChangeMe123!}
+      - HOST=0.0.0.0
+      - PORT=8000
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    networks:
+      - family-finance-network
+
+volumes:
+  family-finance-data:
+    driver: local
+
+networks:
+  family-finance-network:
+    driver: bridge
