@@ -34,20 +34,21 @@ def init_db():
     db = SessionLocal()
     try:
         # Создание администратора по умолчанию
+        admin_username = os.getenv("ADMIN_USERNAME", "admin")
         admin_email = os.getenv("ADMIN_EMAIL", "admin@example.com")
         admin_password = os.getenv("ADMIN_PASSWORD", "ChangeMe123!")
         
-        admin = db.query(User).filter(User.email == admin_email).first()
+        admin = db.query(User).filter(User.username == admin_username).first()
         if not admin:
             admin = User(
-                email=admin_email,
+                username=admin_username,
                 hashed_password=get_password_hash(admin_password),
                 role=UserRole.ADMIN,
                 is_active=True
             )
             db.add(admin)
             db.commit()
-            print(f"Администратор создан: {admin_email}")
+            print(f"Администратор создан: {admin_username} ({admin_email})")
         
         # Инициализация справочников будет вызвана через API при первом запуске
         print("База данных инициализирована успешно")

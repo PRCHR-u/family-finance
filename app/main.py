@@ -123,8 +123,9 @@ def on_startup():
     # Дополнительная проверка наличия администратора (для обратной совместимости)
     _ensure_users_table_columns()
     with SessionLocal() as db:
+        admin_username = os.getenv("ADMIN_USERNAME", "admin")
         admin_email = os.getenv("ADMIN_EMAIL", "admin@example.com")
-        admin = db.scalar(select(User).where(User.email == admin_email))
+        admin = db.scalar(select(User).where(User.username == admin_username))
         if not admin:
             # Пробуем найти любого админа
             admin = db.scalar(select(User).where(User.role == UserRole.ADMIN))
@@ -132,8 +133,7 @@ def on_startup():
             admin_password = os.getenv("ADMIN_PASSWORD", "ChangeMe123!")
             db.add(
                 User(
-                    email=admin_email,
-                    username="admin",
+                    username=admin_username,
                     role=UserRole.ADMIN,
                     hashed_password=get_password_hash(admin_password),
                     is_active=True
