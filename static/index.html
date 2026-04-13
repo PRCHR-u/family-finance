@@ -59,6 +59,35 @@
     <button onclick="importExcel()">Импортировать</button>
   </div>
 
+  <div class="card">
+    <h3>Кредитные карты</h3>
+    <div class="row">
+      <div><input id="cc-name" placeholder="Название карты (СБЕР и т.п.)" /></div>
+      <div><input id="cc-grace-start" type="date" /></div>
+      <div><input id="cc-grace-days" type="number" placeholder="Льготный период (дней)" value="50" /></div>
+      <div><input id="cc-debt" type="number" step="0.01" placeholder="Текущая задолженность" /></div>
+    </div>
+    <button onclick="addCreditCard()">Добавить кредитку</button>
+    <button onclick="loadCreditCards()">Обновить кредитки</button>
+    <table>
+      <thead>
+        <tr><th>ID</th><th>Карта</th><th>Льготный до</th><th>Осталось дней</th><th>Долг</th><th>Статус</th><th>Модерация</th><th>Действия</th></tr>
+      </thead>
+      <tbody id="cc-body"></tbody>
+    </table>
+  </div>
+
+  <div class="card">
+    <h3>Срочно погасить (топ-3)</h3>
+    <button onclick="loadUrgentCreditCards()">Обновить</button>
+    <table>
+      <thead>
+        <tr><th>Карта</th><th>Льготный до</th><th>Осталось дней</th><th>К погашению</th></tr>
+      </thead>
+      <tbody id="urgent-cc-body"></tbody>
+    </table>
+  </div>
+
   <div class="card" id="admin-users-card" style="display:none;">
     <h3>Админ: управление пользователями</h3>
     <div class="row">
@@ -205,6 +234,8 @@
       me = await api("/users/me", { headers: authHeaders() });
       document.getElementById("me").innerText = `Вы вошли как: ${me.username} (${me.role})`;
       await refreshAdminSection();
+      await loadCreditCards();
+      await loadUrgentCreditCards();
       await loadRecords();
     }
 
@@ -263,6 +294,65 @@
       });
       alert(`Импорт: добавлено ${result.inserted}, обновлено ${result.updated}, пропущено ${result.skipped}`);
       await loadRecords();
+    }
+
+    async function addCreditCard() {
+      await api("/credit-cards", {
+        method: "POST",
+        headers: authHeaders(),
+        body: JSON.stringify({
+          card_name: document.getElementById("cc-name").value,
+          grace_start_date: document.getElementById("cc-grace-start").value,
+          grace_period_days: Number(document.getElementById("cc-grace-days").value || 0),
+          current_debt: Number(document.getElementById("cc-debt").value || 0),
+          comment: ""
+        })
+      });
+      alert("Кредитка добавлена");
+      await loadCreditCards();
+      await loadUrgentCreditCards();
+    }
+
+    async function loadCreditCards() {
+      const cards = await api("/credit-cards", { headers: { "Authorization": `Bearer ${token}` } });
+      const tbody = document.getElementById("cc-body");
+      tbody.innerHTML = "";
+      for (const c of cards) {
+        let actions = "";
+        if (me && me.role === "admin" && c.moderation_status === "pending") {
+          actions = `<button onclick="approveCreditCard(${c.id})">Approve</button><button onclick="rejectCreditCard(${c.id})">Reject</button>`;
+        }
+        const tr = document.createElement("tr");
+        tr.innerHTML = `<td>${c.id}</td><td>${c.card_name}</td><td>${c.grace_end_date}</td><td>${c.remaining_grace_days}</td><td>${c.current_debt}</td><td>${c.status}</td><td>${c.moderation_status}</td><td>${actions}</td>`;
+        tbody.appendChild(tr);
+      }
+    }
+
+    async function loadUrgentCreditCards() {
+      const items = await api("/analytics/urgent-credit-cards?limit=3", { headers: { "Authorization": `Bearer ${token}` } });
+      const tbody = document.getElementById("urgent-cc-body");
+      tbody.innerHTML = "";
+      for (const c of items) {
+        const tr = document.createElement("tr");
+        tr.innerHTML = `<td>${c.card_name}</td><td>${c.grace_end_date}</td><td>${c.remaining_grace_days}</td><td>${c.amount_to_pay_urgent}</td>`;
+        tbody.appendChild(tr);
+      }
+    }
+
+    async function approveCreditCard(cardId) {
+      await api(`/credit-cards/${cardId}/approve`, { method: "POST", headers: { "Authorization": `Bearer ${token}` } });
+      await loadCreditCards();
+      await loadUrgentCreditCards();
+      auditOffset = 0;
+      await loadAuditLogs();
+    }
+
+    async function rejectCreditCard(cardId) {
+      await api(`/credit-cards/${cardId}/reject`, { method: "POST", headers: { "Authorization": `Bearer ${token}` } });
+      await loadCreditCards();
+      await loadUrgentCreditCards();
+      auditOffset = 0;
+      await loadAuditLogs();
     }
 
     async function approveRecord(id) {

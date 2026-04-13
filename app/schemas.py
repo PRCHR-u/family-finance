@@ -2,7 +2,7 @@ from datetime import date, datetime
 
 from pydantic import BaseModel, Field
 
-from .models import DebtStatus, RecordStatus, UserRole
+from .models import CreditCardStatus, DebtStatus, RecordStatus, UserRole
 
 
 class UserCreate(BaseModel):
@@ -107,6 +107,35 @@ class DebtRepaymentRead(DebtRepaymentCreate):
     approved_at: datetime | None
     created_at: datetime
     updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class CreditCardBase(BaseModel):
+    card_name: str = Field(min_length=2, max_length=120)
+    grace_start_date: date
+    grace_period_days: int = Field(gt=0, le=120)
+    current_debt: float = Field(ge=0)
+    comment: str | None = Field(default=None, max_length=500)
+
+
+class CreditCardCreate(CreditCardBase):
+    pass
+
+
+class CreditCardRead(CreditCardBase):
+    id: int
+    user_id: int
+    status: CreditCardStatus
+    moderation_status: RecordStatus
+    approved_by_id: int | None
+    approved_at: datetime | None
+    created_at: datetime
+    updated_at: datetime
+    grace_end_date: date
+    remaining_grace_days: int
+    amount_to_pay_urgent: float
 
     class Config:
         from_attributes = True

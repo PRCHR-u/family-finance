@@ -1,5 +1,5 @@
 import csv
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from io import StringIO
 from pathlib import Path
 
@@ -16,6 +16,8 @@ from .auth import create_access_token, get_password_hash, verify_password, decod
 from .database import Base, SessionLocal, engine, get_db
 from .models import (
     AuditLog,
+    CreditCard,
+    CreditCardStatus,
     Debt,
     DebtRepayment,
     DebtStatus,
@@ -28,6 +30,8 @@ from .schemas import (
     AuditLogPage,
     AuditLogRead,
     ChangePasswordRequest,
+    CreditCardCreate,
+    CreditCardRead,
     DebtCreate,
     DebtRead,
     DebtRepaymentCreate,
@@ -164,6 +168,29 @@ def _debt_total_as_of(db: Session, current_user: User, as_of: date) -> float:
         outstanding = max(0.0, debt.principal_amount - sum(item.amount for item in approved_paid))
         total += outstanding
     return total
+
+
+def _serialize_credit_card(card: CreditCard) -> CreditCardRead:
+    grace_end_date = card.grace_start_date + timedelta(days=card.grace_period_days)
+    remaining_days = (grace_end_date - date.today()).days
+    return CreditCardRead(
+        id=card.id,
+        user_id=card.user_id,
+        card_name=card.card_name,
+        grace_start_date=card.grace_start_date,
+        grace_period_days=card.grace_period_days,
+        current_debt=card.current_debt,
+        status=card.status,
+        moderation_status=card.moderation_status,
+        approved_by_id=card.approved_by_id,
+        approved_at=card.approved_at,
+        created_at=card.created_at,
+        updated_at=card.updated_at,
+        comment=card.comment,
+        grace_end_date=grace_end_date,
+        remaining_grace_days=remaining_days,
+        amount_to_pay_urgent=card.current_debt if card.status == CreditCardStatus.ACTIVE else 0.0,
+    )
 
 
 def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)) -> User:
@@ -546,6 +573,115 @@ def reject_repayment(
     db.commit()
     db.refresh(repayment)
     return repayment
+
+
+@app.post("/credit-cards", response_model=CreditCardRead, status_code=status.HTTP_201_CREATED)
+def create_credit_card(
+    payload: CreditCardCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    moderation_status = RecordStatus.APPROVED if current_user.role == UserRole.ADMIN else RecordStatus.PENDING
+    card = CreditCard(
+        user_id=current_user.id,
+        status=CreditCardStatus.ACTIVE if payload.current_debt > 0 else CreditCardStatus.CLOSED,
+        moderation_status=moderation_status,
+        approved_by_id=current_user.id if moderation_status == RecordStatus.APPROVED else None,
+        approved_at=datetime.utcnow() if moderation_status == RecordStatus.APPROVED else None,
+        **payload.model_dump(),
+    )
+    db.add(card)
+    db.flush()
+    _log_action(
+        db,
+        "credit_cards.create",
+        actor_user_id=current_user.id,
+        target_user_id=card.user_id,
+        details=f"card_id={card.id}, card_name={card.card_name}",
+    )
+    db.commit()
+    db.refresh(card)
+    return _serialize_credit_card(card)
+
+
+@app.get("/credit-cards", response_model=list[CreditCardRead])
+def list_credit_cards(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    user_id: int | None = Query(default=None),
+    status_filter: CreditCardStatus | None = Query(default=None, alias="status"),
+    moderation_status: RecordStatus | None = Query(default=None),
+):
+    stmt = select(CreditCard)
+    if current_user.role != UserRole.ADMIN:
+        stmt = stmt.where(CreditCard.user_id == current_user.id)
+    elif user_id is not None:
+        stmt = stmt.where(CreditCard.user_id == user_id)
+    if status_filter is not None:
+        stmt = stmt.where(CreditCard.status == status_filter)
+    if moderation_status is not None:
+        stmt = stmt.where(CreditCard.moderation_status == moderation_status)
+    cards = db.scalars(stmt.order_by(CreditCard.grace_start_date.desc(), CreditCard.id.desc())).all()
+    return [_serialize_credit_card(card) for card in cards]
+
+
+@app.post("/credit-cards/{card_id}/approve", response_model=CreditCardRead)
+def approve_credit_card(card_id: int, db: Session = Depends(get_db), admin: User = Depends(require_admin)):
+    card = db.scalar(select(CreditCard).where(CreditCard.id == card_id))
+    if not card:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Кредитная карта не найдена.")
+    card.moderation_status = RecordStatus.APPROVED
+    card.approved_by_id = admin.id
+    card.approved_at = datetime.utcnow()
+    _log_action(
+        db,
+        "credit_cards.approve",
+        actor_user_id=admin.id,
+        target_user_id=card.user_id,
+        details=f"card_id={card.id}",
+    )
+    db.commit()
+    db.refresh(card)
+    return _serialize_credit_card(card)
+
+
+@app.post("/credit-cards/{card_id}/reject", response_model=CreditCardRead)
+def reject_credit_card(card_id: int, db: Session = Depends(get_db), admin: User = Depends(require_admin)):
+    card = db.scalar(select(CreditCard).where(CreditCard.id == card_id))
+    if not card:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Кредитная карта не найдена.")
+    card.moderation_status = RecordStatus.REJECTED
+    card.approved_by_id = None
+    card.approved_at = None
+    _log_action(
+        db,
+        "credit_cards.reject",
+        actor_user_id=admin.id,
+        target_user_id=card.user_id,
+        details=f"card_id={card.id}",
+    )
+    db.commit()
+    db.refresh(card)
+    return _serialize_credit_card(card)
+
+
+@app.get("/analytics/urgent-credit-cards", response_model=list[CreditCardRead])
+def urgent_credit_cards(
+    limit: int = Query(default=3, ge=1, le=20),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    stmt = select(CreditCard).where(
+        CreditCard.moderation_status == RecordStatus.APPROVED,
+        CreditCard.status == CreditCardStatus.ACTIVE,
+        CreditCard.current_debt > 0,
+    )
+    if current_user.role != UserRole.ADMIN:
+        stmt = stmt.where(CreditCard.user_id == current_user.id)
+    cards = db.scalars(stmt).all()
+    serialized = [_serialize_credit_card(card) for card in cards]
+    serialized.sort(key=lambda item: (item.remaining_grace_days, -item.amount_to_pay_urgent))
+    return serialized[:limit]
 
 
 @app.post("/records", response_model=FinanceRecordRead, status_code=status.HTTP_201_CREATED)

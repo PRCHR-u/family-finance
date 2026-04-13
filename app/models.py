@@ -23,6 +23,11 @@ class DebtStatus(str, Enum):
     CLOSED = "closed"
 
 
+class CreditCardStatus(str, Enum):
+    ACTIVE = "active"
+    CLOSED = "closed"
+
+
 class User(Base):
     __tablename__ = "users"
 
@@ -98,6 +103,31 @@ class DebtRepayment(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
     payment_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
     amount: Mapped[float] = mapped_column(Float, nullable=False)
+    comment: Mapped[str | None] = mapped_column(String(500), nullable=True)
+
+    moderation_status: Mapped[RecordStatus] = mapped_column(
+        SqlEnum(RecordStatus), nullable=False, default=RecordStatus.PENDING
+    )
+    approved_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow
+    )
+
+
+class CreditCard(Base):
+    __tablename__ = "credit_cards"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
+    card_name: Mapped[str] = mapped_column(String(120), nullable=False, index=True)
+    grace_start_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    grace_period_days: Mapped[int] = mapped_column(Integer, nullable=False)
+    current_debt: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    status: Mapped[CreditCardStatus] = mapped_column(
+        SqlEnum(CreditCardStatus), nullable=False, default=CreditCardStatus.ACTIVE
+    )
     comment: Mapped[str | None] = mapped_column(String(500), nullable=True)
 
     moderation_status: Mapped[RecordStatus] = mapped_column(
