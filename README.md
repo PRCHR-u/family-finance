@@ -109,10 +109,44 @@ Endpoint `POST /imports/excel` (только админ) читает файл `
 
 ## Запуск
 
+### Вариант 1: Автоматический деплой (рекомендуется)
+
 ```bash
-pip install -r requirements.txt
-uvicorn app.main:app --reload
+./deploy.sh
 ```
+
+Скрипт автоматически настроит виртуальное окружение, установит зависимости, сгенерирует SECRET_KEY и предложит выбрать режим запуска.
+
+### Вариант 2: Ручная установка
+
+```bash
+# Создание виртуального окружения
+python3 -m venv venv
+source venv/bin/activate
+
+# Установка зависимостей
+pip install -r requirements.txt
+pip install gunicorn
+
+# Настройка переменных окружения
+cp .env.example .env
+# Отредактируйте .env, измените пароли и сгенерируйте SECRET_KEY
+
+# Инициализация БД
+python3 -c "from app.database import init_db; init_db()"
+
+# Запуск сервера
+gunicorn app.main:app -w 4 -k uvicorn.workers.UvicornWorker -b 0.0.0.0:8000
+```
+
+### Вариант 3: Docker
+
+```bash
+docker-compose up -d
+docker-compose logs -f
+```
+
+---
 
 - Swagger: `http://127.0.0.1:8000/docs`
 - Web UI: `http://127.0.0.1:8000/`
@@ -121,7 +155,29 @@ uvicorn app.main:app --reload
 
 Создается автоматически при первом запуске:
 
-- `username`: `admin`
-- `password`: `admin123456`
+- `email`: `admin@example.com` (настраивается через `ADMIN_EMAIL`)
+- `password`: `ChangeMe123!` (настраивается через `ADMIN_PASSWORD`)
 
-После первого входа рекомендуется сменить пароль (в текущем MVP можно сделать через создание нового admin пользователя и удаление старого в БД).
+**Важно:** После первого входа сразу смените пароль через веб-интерфейс или API endpoint `/users/change-password`.
+
+Для изменения учетных данных администратора используйте переменные окружения:
+- `ADMIN_EMAIL` — email администратора
+- `ADMIN_PASSWORD` — пароль администратора
+## 📋 Полная документация по развертыванию
+
+Подробное руководство по деплою на продакшен-сервер, настройке Docker, Nginx, HTTPS и мониторингу доступно в файле [DEPLOYMENT.md](DEPLOYMENT.md).
+
+### Краткий чеклист для продакшена:
+
+1. ✅ Сгенерировать надежный `SECRET_KEY`
+2. ✅ Изменить пароль администратора по умолчанию
+3. ✅ Настроить HTTPS (Let's Encrypt)
+4. ✅ Настроить firewall (UFW)
+5. ✅ Настроить резервное копирование БД
+6. ✅ Настроить мониторинг и логирование
+
+---
+
+## 📄 Лицензия
+
+MIT License
