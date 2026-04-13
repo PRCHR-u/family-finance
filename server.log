@@ -1,0 +1,20 @@
+OpenBLAS WARNING - could not determine the L2 cache size on this system, assuming 256k
+INFO:     Started server process [1433]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+INFO:     127.0.0.1:47576 - "GET /docs HTTP/1.1" 200 OK
+INFO:     127.0.0.1:47578 - "POST /token HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:47580 - "GET /openapi.json HTTP/1.1" 200 OK
+INFO:     127.0.0.1:47582 - "GET /openapi.json HTTP/1.1" 200 OK
+INFO:     127.0.0.1:47584 - "POST /auth/login HTTP/1.1" 200 OK
+INFO:     127.0.0.1:47588 - "POST /auth/login HTTP/1.1" 200 OK
+INFO:     127.0.0.1:47592 - "POST /imports/excel HTTP/1.1" 200 OK
+INFO:     127.0.0.1:47596 - "POST /auth/login HTTP/1.1" 200 OK
+INFO:     127.0.0.1:47600 - "GET /debts HTTP/1.1" 200 OK
+INFO:     127.0.0.1:47604 - "GET /incomes HTTP/1.1" 200 OK
+INFO:     127.0.0.1:47608 - "GET /expenses HTTP/1.1" 200 OK
+INFO:     127.0.0.1:47612 - "POST /auth/login HTTP/1.1" 200 OK
+INFO:     127.0.0.1:47616 - "GET /analytics/urgent-credit-cards HTTP/1.1" 200 OK
+INFO:     127.0.0.1:47620 - "GET /analytics/mandatory-expenses-monthly HTTP/1.1" 200 OK
+INFO:     127.0.0.1:47624 - "GET /health HTTP/1.1" 200 OK
