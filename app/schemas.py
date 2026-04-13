@@ -2,7 +2,7 @@ from datetime import date, datetime
 
 from pydantic import BaseModel, Field
 
-from .models import CreditCardStatus, DebtStatus, RecordStatus, UserRole
+from .models import CreditCardStatus, DebtStatus, ExpenseCategory, IncomeCategory, RecordStatus, UserRole
 
 
 class UserCreate(BaseModel):
@@ -136,6 +136,49 @@ class CreditCardRead(CreditCardBase):
     grace_end_date: date
     remaining_grace_days: int
     amount_to_pay_urgent: float
+
+    class Config:
+        from_attributes = True
+
+
+class IncomeCreate(BaseModel):
+    amount: float = Field(gt=0)
+    income_date: date
+    category: IncomeCategory | None = None
+    description: str | None = Field(default=None, max_length=500)
+    is_actual: bool = False
+
+
+class IncomeRead(IncomeCreate):
+    id: int
+    user_id: int
+    moderation_status: RecordStatus
+    approved_by_id: int | None
+    approved_at: datetime | None
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class ExpenseCreate(BaseModel):
+    amount: float = Field(gt=0)
+    due_date: date
+    category: ExpenseCategory | None = None
+    description: str | None = Field(default=None, max_length=500)
+    is_mandatory: bool = False
+    is_completed: bool = False
+
+
+class ExpenseRead(ExpenseCreate):
+    id: int
+    user_id: int
+    moderation_status: RecordStatus
+    approved_by_id: int | None
+    approved_at: datetime | None
+    created_at: datetime
+    updated_at: datetime
 
     class Config:
         from_attributes = True
