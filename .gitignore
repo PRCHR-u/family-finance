@@ -50,3 +50,6 @@ Thumbs.db
 ehthumbs.db
 Thumbs.db
 ```
+# Database files
+*.db
+```
