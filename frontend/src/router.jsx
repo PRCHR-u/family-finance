@@ -4,10 +4,10 @@ import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
 import DashboardPage from './pages/DashboardPage';
 import DebtsPage from './pages/DebtsPage';
+import ExpensesPage from './pages/ExpensesPage';
+import IncomesPage from './pages/IncomesPage';
 
 // Placeholder pages - will be implemented next
-const ExpensesPage = () => <div className="p-6"><h1 className="text-2xl font-bold">Расходы</h1><p className="mt-4 text-gray-600">Страница в разработке...</p></div>;
-const IncomesPage = () => <div className="p-6"><h1 className="text-2xl font-bold">Доходы</h1><p className="mt-4 text-gray-600">Страница в разработке...</p></div>;
 const CreditCardsPage = () => <div className="p-6"><h1 className="text-2xl font-bold">Кредитные карты</h1><p className="mt-4 text-gray-600">Страница в разработке...</p></div>;
 const PendingPage = () => <div className="p-6"><h1 className="text-2xl font-bold">На модерации</h1><p className="mt-4 text-gray-600">Страница в разработке...</p></div>;
 const UsersPage = () => <div className="p-6"><h1 className="text-2xl font-bold">Пользователи</h1><p className="mt-4 text-gray-600">Страница в разработке...</p></div>;
