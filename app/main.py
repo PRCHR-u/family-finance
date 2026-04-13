@@ -21,7 +21,11 @@ from .models import (
     Debt,
     DebtRepayment,
     DebtStatus,
+    Expense,
+    ExpenseCategory,
     FinanceRecord,
+    Income,
+    IncomeCategory,
     RecordStatus,
     User,
     UserRole,
@@ -37,9 +41,13 @@ from .schemas import (
     DebtRepaymentCreate,
     DebtRepaymentRead,
     DebtSummary,
+    ExpenseCreate,
+    ExpenseRead,
     FinanceRecordCreate,
     FinanceRecordRead,
     FinanceRecordUpdate,
+    IncomeCreate,
+    IncomeRead,
     LoginRequest,
     TokenResponse,
     UserAdminUpdate,
@@ -850,6 +858,12 @@ def import_excel(
     db: Session = Depends(get_db),
     admin: User = Depends(require_admin),
 ):
+    """
+    Импорт детализированных данных из Excel файла ДОЛГИ.xlsx:
+    - Создаёт объекты Debt для каждого кредитора (СБЕР, АЛЬФА, МТС1, МТС2, Т-БАНК, ОЛЯ, КРЕДИТ)
+    - Создаёт объекты Income из блока доходов (колонки M-O)
+    - Создаёт объекты Expense из блока обязательных трат (колонки M-O)
+    """
     import_file = Path(file_path)
     if not import_file.is_absolute():
         import_file = Path.cwd() / import_file
@@ -862,79 +876,404 @@ def import_excel(
 
     wb = openpyxl.load_workbook(import_file, data_only=True)
     ws = wb[wb.sheetnames[0]]
-
     rows = list(ws.iter_rows(values_only=True))
-    income_by_date: dict[date, float] = {}
-    for row in rows:
-        income_date = _coerce_date(row[14] if len(row) > 14 else None)
-        income_amount = _coerce_float(row[13] if len(row) > 13 else None)
-        if income_date and income_amount:
-            income_by_date[income_date] = income_by_date.get(income_date, 0.0) + income_amount
 
-    inserted = 0
+    # Словарь кредиторов и их колонок
+    CREDITOR_COLUMNS = {
+        "СБЕР": 1,      # B
+        "АЛЬФА": 2,     # C
+        "МТС1": 3,      # D
+        "МТС2": 4,      # E
+        "Т-БАНК": 5,    # F
+        "ОЛЯ": 6,       # G
+        "КРЕДИТ": 7,    # H
+    }
+
+    inserted_debts = 0
+    inserted_incomes = 0
+    inserted_expenses = 0
     updated = 0
     skipped = 0
 
+    # Парсинг строк с долгами (колонки A-I)
     for row in rows:
         period_date = _coerce_date(row[0] if len(row) > 0 else None)
-        debt_total = _coerce_float(row[8] if len(row) > 8 else None)
-        if not period_date or debt_total is None:
+        if not period_date or not isinstance(period_date, date):
             continue
 
-        mandatory_expense = _coerce_float(row[7] if len(row) > 7 else None) or 0.0
-        urgent_repayment = _coerce_float(row[10] if len(row) > 10 else None) or 0.0
-        planned_expense = _coerce_float(row[9] if len(row) > 9 else None) or 0.0
-        income = income_by_date.get(period_date, 0.0)
+        # Создаём записи долгов по каждому кредитору
+        for creditor_name, col_idx in CREDITOR_COLUMNS.items():
+            balance = _coerce_float(row[col_idx] if len(row) > col_idx else None)
+            if balance is None or balance <= 0:
+                continue
 
-        existing = db.scalar(
-            select(FinanceRecord).where(
-                FinanceRecord.user_id == target_user.id,
-                FinanceRecord.period_date == period_date,
-            )
-        )
-        if existing and not overwrite:
-            skipped += 1
-            continue
-
-        payload = {
-            "income": income,
-            "planned_expense": planned_expense,
-            "debt_total": debt_total,
-            "mandatory_expense": mandatory_expense,
-            "urgent_creditcard_repayment": urgent_repayment,
-            "comment": "Импорт из Excel",
-        }
-
-        if existing:
-            for key, value in payload.items():
-                setattr(existing, key, value)
-            existing.status = RecordStatus.APPROVED
-            existing.approved_by_id = admin.id
-            existing.approved_at = datetime.utcnow()
-            updated += 1
-        else:
-            db.add(
-                FinanceRecord(
-                    user_id=target_user.id,
-                    period_date=period_date,
-                    status=RecordStatus.APPROVED,
-                    approved_by_id=admin.id,
-                    approved_at=datetime.utcnow(),
-                    **payload,
+            # Проверяем существующий долг
+            existing_debt = db.scalar(
+                select(Debt).where(
+                    Debt.user_id == target_user.id,
+                    Debt.creditor_name == creditor_name,
+                    Debt.start_date == period_date,
                 )
             )
-            inserted += 1
+
+            if existing_debt and not overwrite:
+                skipped += 1
+                continue
+
+            if existing_debt:
+                existing_debt.current_balance = balance
+                existing_debt.principal_amount = max(existing_debt.principal_amount, balance)
+                updated += 1
+            else:
+                debt = Debt(
+                    user_id=target_user.id,
+                    creditor_name=creditor_name,
+                    principal_amount=balance,
+                    current_balance=balance,
+                    start_date=period_date,
+                    moderation_status=RecordStatus.APPROVED,
+                    approved_by_id=admin.id,
+                    approved_at=datetime.utcnow(),
+                )
+                db.add(debt)
+                inserted_debts += 1
+
+    # Парсинг доходов и расходов (колонки M-O)
+    current_section = None  # 'income' или 'expense'
+
+    for row in rows:
+        if len(row) <= 12:
+            continue
+
+        cell_m = row[12]  # Название/категория
+        cell_n = row[13]  # Сумма
+        cell_o = row[14]  # Дата
+
+        # Определяем секцию по заголовкам
+        if isinstance(cell_m, str):
+            if "доход" in cell_m.lower():
+                current_section = "income"
+                continue
+            elif "трат" in cell_m.lower() or "расход" in cell_m.lower():
+                current_section = "expense"
+                continue
+            elif "ВСЕГО" in cell_m or "TOTAL" in cell_m or "изменение" in cell_m.lower():
+                current_section = None
+                continue
+
+        if current_section is None:
+            continue
+
+        # Пропускаем строки-заголовки внутри секций
+        if isinstance(cell_n, str) or cell_n is None:
+            continue
+
+        amount = _coerce_float(cell_n)
+        if amount is None or amount <= 0:
+            continue
+
+        # Парсим дату
+        item_date = _coerce_date(cell_o)
+        if item_date is None:
+            # Попытка распарсить строку вида "17.04-20.04"
+            if isinstance(cell_o, str):
+                try:
+                    # Берём первую дату из диапазона
+                    date_part = cell_o.split("-")[0].strip()
+                    item_date = datetime.strptime(date_part, "%d.%m").replace(year=2026).date()
+                except (ValueError, IndexError):
+                    continue
+            else:
+                continue
+
+        description = cell_m if isinstance(cell_m, str) else None
+
+        if current_section == "income":
+            # Определяем категорию дохода
+            category = None
+            if description:
+                desc_lower = description.lower()
+                if "зп" in desc_lower or "зарплат" in desc_lower:
+                    category = IncomeCategory.SALARY
+                elif "аванс" in desc_lower:
+                    category = IncomeCategory.SALARY
+                elif "стипенд" in desc_lower:
+                    category = IncomeCategory.SCHOLARSHIP
+                elif "отец" in desc_lower or "мама" in desc_lower or "папа" in desc_lower:
+                    category = IncomeCategory.GIFT
+                elif "склад" in desc_lower:
+                    category = IncomeCategory.FREELANCE
+
+            income = Income(
+                user_id=target_user.id,
+                amount=amount,
+                income_date=item_date,
+                category=category,
+                description=description,
+                is_actual=False,  # По умолчанию планируемый
+                moderation_status=RecordStatus.APPROVED,
+                approved_by_id=admin.id,
+                approved_at=datetime.utcnow(),
+            )
+            db.add(income)
+            inserted_incomes += 1
+
+        elif current_section == "expense":
+            # Определяем категорию расхода
+            category = None
+            is_mandatory = True  # Все из этого блока считаем обязательными
+            if description:
+                desc_lower = description.lower()
+                if "аренд" in desc_lower:
+                    category = ExpenseCategory.RENT
+                elif "коммунал" in desc_lower:
+                    category = ExpenseCategory.UTILITIES
+                elif "белка" in desc_lower or "продукт" in desc_lower or "еда" in desc_lower:
+                    category = ExpenseCategory.FOOD
+                elif "топлив" in desc_lower or "бензин" in desc_lower:
+                    category = ExpenseCategory.TRANSPORT
+                elif "год" in desc_lower or "др" in desc_lower or "подар" in desc_lower:
+                    category = ExpenseCategory.GIFTS
+                elif "toefl" in desc_lower or "учеб" in desc_lower:
+                    category = ExpenseCategory.EDUCATION
+
+            expense = Expense(
+                user_id=target_user.id,
+                amount=amount,
+                due_date=item_date,
+                category=category,
+                description=description,
+                is_mandatory=is_mandatory,
+                is_completed=False,
+                moderation_status=RecordStatus.APPROVED,
+                approved_by_id=admin.id,
+                approved_at=datetime.utcnow(),
+            )
+            db.add(expense)
+            inserted_expenses += 1
 
     _log_action(
         db,
         "imports.excel",
         actor_user_id=admin.id,
         target_user_id=target_user.id,
-        details=f"file={import_file.name}, inserted={inserted}, updated={updated}, skipped={skipped}",
+        details=f"file={import_file.name}, debts={inserted_debts}, incomes={inserted_incomes}, expenses={inserted_expenses}, updated={updated}, skipped={skipped}",
     )
     db.commit()
-    return ImportResult(inserted=inserted, updated=updated, skipped=skipped)
+    return ImportResult(inserted=inserted_debts + inserted_incomes + inserted_expenses, updated=updated, skipped=skipped)
 
+
+# ==================== INCOME ENDPOINTS ====================
+
+@app.post("/incomes", response_model=IncomeRead, status_code=status.HTTP_201_CREATED)
+def create_income(
+    payload: IncomeCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    moderation_status = RecordStatus.APPROVED if current_user.role == UserRole.ADMIN else RecordStatus.PENDING
+    income = Income(
+        user_id=current_user.id,
+        moderation_status=moderation_status,
+        approved_by_id=current_user.id if moderation_status == RecordStatus.APPROVED else None,
+        approved_at=datetime.utcnow() if moderation_status == RecordStatus.APPROVED else None,
+        **payload.model_dump(),
+    )
+    db.add(income)
+    db.flush()
+    _log_action(
+        db,
+        "incomes.create",
+        actor_user_id=current_user.id,
+        target_user_id=income.user_id,
+        details=f"income_id={income.id}, amount={income.amount}",
+    )
+    db.commit()
+    db.refresh(income)
+    return income
+
+
+@app.get("/incomes", response_model=list[IncomeRead])
+def list_incomes(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    user_id: int | None = Query(default=None),
+    moderation_status: RecordStatus | None = Query(default=None),
+    is_actual: bool | None = Query(default=None),
+):
+    stmt = select(Income)
+    if current_user.role != UserRole.ADMIN:
+        stmt = stmt.where(Income.user_id == current_user.id)
+    elif user_id is not None:
+        stmt = stmt.where(Income.user_id == user_id)
+    if moderation_status is not None:
+        stmt = stmt.where(Income.moderation_status == moderation_status)
+    if is_actual is not None:
+        stmt = stmt.where(Income.is_actual == is_actual)
+    return db.scalars(stmt.order_by(Income.income_date.desc(), Income.id.desc())).all()
+
+
+@app.post("/incomes/{income_id}/approve", response_model=IncomeRead)
+def approve_income(income_id: int, db: Session = Depends(get_db), admin: User = Depends(require_admin)):
+    income = db.scalar(select(Income).where(Income.id == income_id))
+    if not income:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Доход не найден.")
+    income.moderation_status = RecordStatus.APPROVED
+    income.approved_by_id = admin.id
+    income.approved_at = datetime.utcnow()
+    _log_action(
+        db,
+        "incomes.approve",
+        actor_user_id=admin.id,
+        target_user_id=income.user_id,
+        details=f"income_id={income.id}",
+    )
+    db.commit()
+    db.refresh(income)
+    return income
+
+
+@app.post("/incomes/{income_id}/mark-actual", response_model=IncomeRead)
+def mark_income_actual(income_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    income = db.scalar(select(Income).where(Income.id == income_id))
+    if not income:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Доход не найден.")
+    if current_user.role != UserRole.ADMIN and income.user_id != current_user.id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Нет доступа.")
+    income.is_actual = True
+    db.commit()
+    db.refresh(income)
+    return income
+
+
+# ==================== EXPENSE ENDPOINTS ====================
+
+@app.post("/expenses", response_model=ExpenseRead, status_code=status.HTTP_201_CREATED)
+def create_expense(
+    payload: ExpenseCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    moderation_status = RecordStatus.APPROVED if current_user.role == UserRole.ADMIN else RecordStatus.PENDING
+    expense = Expense(
+        user_id=current_user.id,
+        moderation_status=moderation_status,
+        approved_by_id=current_user.id if moderation_status == RecordStatus.APPROVED else None,
+        approved_at=datetime.utcnow() if moderation_status == RecordStatus.APPROVED else None,
+        **payload.model_dump(),
+    )
+    db.add(expense)
+    db.flush()
+    _log_action(
+        db,
+        "expenses.create",
+        actor_user_id=current_user.id,
+        target_user_id=expense.user_id,
+        details=f"expense_id={expense.id}, amount={expense.amount}",
+    )
+    db.commit()
+    db.refresh(expense)
+    return expense
+
+
+@app.get("/expenses", response_model=list[ExpenseRead])
+def list_expenses(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    user_id: int | None = Query(default=None),
+    moderation_status: RecordStatus | None = Query(default=None),
+    is_completed: bool | None = Query(default=None),
+    is_mandatory: bool | None = Query(default=None),
+):
+    stmt = select(Expense)
+    if current_user.role != UserRole.ADMIN:
+        stmt = stmt.where(Expense.user_id == current_user.id)
+    elif user_id is not None:
+        stmt = stmt.where(Expense.user_id == user_id)
+    if moderation_status is not None:
+        stmt = stmt.where(Expense.moderation_status == moderation_status)
+    if is_completed is not None:
+        stmt = stmt.where(Expense.is_completed == is_completed)
+    if is_mandatory is not None:
+        stmt = stmt.where(Expense.is_mandatory == is_mandatory)
+    return db.scalars(stmt.order_by(Expense.due_date.asc(), Expense.id.desc())).all()
+
+
+@app.post("/expenses/{expense_id}/approve", response_model=ExpenseRead)
+def approve_expense(expense_id: int, db: Session = Depends(get_db), admin: User = Depends(require_admin)):
+    expense = db.scalar(select(Expense).where(Expense.id == expense_id))
+    if not expense:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Расход не найден.")
+    expense.moderation_status = RecordStatus.APPROVED
+    expense.approved_by_id = admin.id
+    expense.approved_at = datetime.utcnow()
+    _log_action(
+        db,
+        "expenses.approve",
+        actor_user_id=admin.id,
+        target_user_id=expense.user_id,
+        details=f"expense_id={expense.id}",
+    )
+    db.commit()
+    db.refresh(expense)
+    return expense
+
+
+@app.post("/expenses/{expense_id}/complete", response_model=ExpenseRead)
+def complete_expense(expense_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    expense = db.scalar(select(Expense).where(Expense.id == expense_id))
+    if not expense:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Расход не найден.")
+    if current_user.role != UserRole.ADMIN and expense.user_id != current_user.id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Нет доступа.")
+    expense.is_completed = True
+    db.commit()
+    db.refresh(expense)
+    return expense
+
+
+@app.get("/analytics/mandatory-expenses-monthly", response_model=dict)
+def get_monthly_mandatory_expenses(
+    year: int = Query(default=None),
+    month: int = Query(default=None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    from datetime import date as dt_date
+    
+    today = dt_date.today()
+    if year is None:
+        year = today.year
+    if month is None:
+        month = today.month
+    
+    from calendar import monthrange
+    _, last_day = monthrange(year, month)
+    start_date = dt_date(year, month, 1)
+    end_date = dt_date(year, month, last_day)
+    
+    stmt = select(Expense).where(
+        Expense.user_id == current_user.id if current_user.role != UserRole.ADMIN else True,
+        Expense.is_mandatory == True,
+        Expense.due_date >= start_date,
+        Expense.due_date <= end_date,
+    )
+    expenses = db.scalars(stmt).all()
+    
+    total = sum(e.amount for e in expenses)
+    completed = sum(e.amount for e in expenses if e.is_completed)
+    
+    return {
+        "year": year,
+        "month": month,
+        "total_mandatory": total,
+        "completed": completed,
+        "pending": total - completed,
+        "count": len(expenses),
+    }
+
+
+# ==================== AUDIT LOGS ====================
 
 def _build_audit_query(
     action: str | None,
@@ -964,6 +1303,7 @@ def _build_audit_query(
         stmt = stmt.where(AuditLog.actor_user_id == actor_user_id)
     if target_user_id is not None:
         stmt = stmt.where(AuditLog.target_user_id == target_user_id)
+    stmt = stmt.order_by(AuditLog.id)
     return stmt
 
 

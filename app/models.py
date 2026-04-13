@@ -28,6 +28,29 @@ class CreditCardStatus(str, Enum):
     CLOSED = "closed"
 
 
+class ExpenseCategory(str, Enum):
+    RENT = "rent"
+    UTILITIES = "utilities"
+    FOOD = "food"
+    TRANSPORT = "transport"
+    ENTERTAINMENT = "entertainment"
+    EDUCATION = "education"
+    MEDICAL = "medical"
+    GIFTS = "gifts"
+    LOAN_REPAYMENT = "loan_repayment"
+    OTHER = "other"
+
+
+class IncomeCategory(str, Enum):
+    SALARY = "salary"
+    BONUS = "bonus"
+    SCHOLARSHIP = "scholarship"
+    GIFT = "gift"
+    INVESTMENT = "investment"
+    FREELANCE = "freelance"
+    OTHER = "other"
+
+
 class User(Base):
     __tablename__ = "users"
 
@@ -150,3 +173,48 @@ class AuditLog(Base):
     target_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     details: Mapped[str | None] = mapped_column(String(1000), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow, index=True)
+
+
+class Income(Base):
+    __tablename__ = "incomes"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
+    amount: Mapped[float] = mapped_column(Float, nullable=False)
+    income_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    category: Mapped[IncomeCategory | None] = mapped_column(SqlEnum(IncomeCategory), nullable=True)
+    description: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    is_actual: Mapped[bool] = mapped_column(nullable=False, default=False)
+
+    moderation_status: Mapped[RecordStatus] = mapped_column(
+        SqlEnum(RecordStatus), nullable=False, default=RecordStatus.PENDING
+    )
+    approved_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow
+    )
+
+
+class Expense(Base):
+    __tablename__ = "expenses"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
+    amount: Mapped[float] = mapped_column(Float, nullable=False)
+    due_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    category: Mapped[ExpenseCategory | None] = mapped_column(SqlEnum(ExpenseCategory), nullable=True)
+    description: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    is_mandatory: Mapped[bool] = mapped_column(nullable=False, default=False)
+    is_completed: Mapped[bool] = mapped_column(nullable=False, default=False)
+
+    moderation_status: Mapped[RecordStatus] = mapped_column(
+        SqlEnum(RecordStatus), nullable=False, default=RecordStatus.PENDING
+    )
+    approved_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow
+    )
