@@ -1549,6 +1549,32 @@ def export_audit_logs_csv(
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 
+@app.get("/")
+def root():
+    from fastapi.responses import FileResponse
+    return FileResponse(STATIC_DIR / "index.html")
+
+
+@app.get("/assets/{path:path}")
+def serve_assets(path: str):
+    """Serve frontend assets (JS, CSS) from static directory."""
+    from fastapi.responses import FileResponse
+    file_path = STATIC_DIR / "assets" / path
+    if file_path.exists():
+        return FileResponse(file_path)
+    raise HTTPException(status_code=404, detail="Asset not found")
+
+
+@app.get("/{path:path}")
+def serve_static_files(path: str):
+    """Serve static files (favicon, icons, etc.) from static directory."""
+    from fastapi.responses import FileResponse
+    file_path = STATIC_DIR / path
+    if file_path.exists() and file_path.is_file():
+        return FileResponse(file_path)
+    raise HTTPException(status_code=404, detail="File not found")
+
+
 @app.get("/assets/{path:path}")
 def serve_assets(path: str):
     """Serve frontend assets (JS, CSS) from static directory."""
@@ -1749,8 +1775,3 @@ def delete_credit_card_issuer(issuer_id: int, db: Session = Depends(get_db), adm
     db.delete(issuer)
     db.commit()
     return {"message": "Эмитент удалён."}
-
-
-@app.get("/")
-def root():
-    return FileResponse(STATIC_DIR / "index.html")
