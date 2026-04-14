@@ -1549,6 +1549,16 @@ def export_audit_logs_csv(
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 
+@app.get("/assets/{path:path}")
+def serve_assets(path: str):
+    """Serve frontend assets (JS, CSS) from static directory."""
+    from fastapi.responses import FileResponse
+    file_path = STATIC_DIR / "assets" / path
+    if file_path.exists():
+        return FileResponse(file_path)
+    raise HTTPException(status_code=404, detail="Asset not found")
+
+
 # ==================== DICTIONARY ENDPOINTS (CREDITORS) ====================
 
 @app.post("/creditors", response_model=CreditorRead, status_code=status.HTTP_201_CREATED)
