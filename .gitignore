@@ -8,34 +8,11 @@ __pycache__/
 # Logs
 *.log
 
+# Dependencies
+node_modules/
+
 # Environment
 .env
 .env.local
-*.env.*
-
-# Dependencies
-.venv/
-venv/
-node_modules/
-
-# Build artifacts
-dist/
-build/
-static/assets/
-
-# Editors
-.vscode/
-.idea/
-*.swp
-*.swo
-*.tmp
-
-# Coverage
-.coverage
-coverage/
-htmlcov/
-
-# OS
-.DS_Store
-Thumbs.db
+.env.*
 ```
