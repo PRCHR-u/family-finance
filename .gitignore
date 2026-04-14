@@ -1,1 +1,25 @@
-(frontend/src/index.css is a source file, and there are no build artifacts, dependencies, or temp files in the changes)
+```
+# Build artifacts
+static/assets/
+dist/
+build/
+*.js
+*.css
+
+# Dependencies
+node_modules/
+
+# Editors
+.vscode/
+.idea/
+
+# Logs and temp files
+*.log
+*.tmp
+*.swp
+
+# Environment
+.env
+.env.local
+*.env.*
+```
