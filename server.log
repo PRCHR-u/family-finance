@@ -1,11 +1,14 @@
 nohup: ignoring input
 OpenBLAS WARNING - could not determine the L2 cache size on this system, assuming 256k
-INFO:     Started server process [808]
+INFO:     Started server process [353]
 INFO:     Waiting for application startup.
 INFO:     Application startup complete.
 INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
 База данных инициализирована успешно
-INFO:     127.0.0.1:39602 - "GET / HTTP/1.1" 200 OK
-INFO:     127.0.0.1:39604 - "GET /assets/index-f_tJ_Q1M.js HTTP/1.1" 200 OK
-INFO:     127.0.0.1:39606 - "GET /assets/index-nqMpL4T3.css HTTP/1.1" 200 OK
-INFO:     127.0.0.1:39608 - "GET /favicon.svg HTTP/1.1" 200 OK
+INFO:     127.0.0.1:46002 - "GET /auth/login HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:46004 - "GET /docs HTTP/1.1" 200 OK
+/usr/local/lib/python3.12/site-packages/fastapi/openapi/utils.py:246: UserWarning: Duplicate Operation ID serve_assets_assets__path__get for function serve_assets at /workspace/app/main.py
+  warnings.warn(message, stacklevel=1)
+INFO:     127.0.0.1:46006 - "GET /openapi.json HTTP/1.1" 200 OK
+INFO:     127.0.0.1:46008 - "POST /auth/register HTTP/1.1" 201 Created
+INFO:     127.0.0.1:46010 - "POST /auth/login HTTP/1.1" 200 OK
