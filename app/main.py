@@ -2145,3 +2145,404 @@ async def read_server_xlsx(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Ошибка при чтении файла: {str(e)}"
         )
+
+
+class XLSXImportResult(BaseModel):
+    """Результат импорта данных из XLSX"""
+    filename: str
+    sheet_name: str
+    total_rows: int
+    inserted: int
+    updated: int
+    skipped: int
+    errors: List[Dict[str, Any]] = []
+
+
+def _map_debt_from_row(row: Dict[str, Any], user_id: int) -> Dict[str, Any]:
+    """Маппинг строки данных в модель Debt"""
+    # Поддержка различных названий колонок
+    creditor_map = {'creditor_name', 'creditor', 'кредитор', 'название_кредитора'}
+    principal_map = {'principal_amount', 'principal', 'сумма_долга', 'основной_долг', 'тело_долга'}
+    start_date_map = {'start_date', 'date', 'дата_начала', 'дата'}
+    planned_date_map = {'planned_payoff_date', 'planned_date', 'дата_погашения', 'плановая_дата'}
+    interest_map = {'interest_rate', 'interest', 'ставка', 'процентная_ставка'}
+    comment_map = {'comment', 'comments', 'комментарий', 'примечание'}
+    balance_map = {'current_balance', 'balance', 'текущий_баланс', 'остаток'}
+    
+    result = {'user_id': user_id}
+    
+    for key, value in row.items():
+        key_lower = key.lower().strip() if key else ''
+        
+        if key_lower in creditor_map:
+            result['creditor_name'] = str(value) if value else None
+        elif key_lower in principal_map:
+            result['principal_amount'] = _coerce_float(value)
+        elif key_lower in start_date_map:
+            result['start_date'] = _coerce_date(value)
+        elif key_lower in planned_date_map:
+            result['planned_payoff_date'] = _coerce_date(value)
+        elif key_lower in interest_map:
+            result['interest_rate'] = _coerce_float(value)
+        elif key_lower in comment_map:
+            result['comment'] = str(value) if value else None
+        elif key_lower in balance_map:
+            result['current_balance'] = _coerce_float(value)
+    
+    # Установка значений по умолчанию
+    if 'current_balance' not in result and 'principal_amount' in result:
+        result['current_balance'] = result['principal_amount']
+    
+    return result
+
+
+def _map_income_from_row(row: Dict[str, Any], user_id: int) -> Dict[str, Any]:
+    """Маппинг строки данных в модель Income"""
+    amount_map = {'amount', 'сумма', 'доход'}
+    date_map = {'income_date', 'date', 'дата_дохода', 'дата'}
+    category_map = {'category', 'категория'}
+    description_map = {'description', 'desc', 'описание', 'комментарий'}
+    is_actual_map = {'is_actual', 'actual', 'актуальный'}
+    
+    result = {'user_id': user_id}
+    
+    for key, value in row.items():
+        key_lower = key.lower().strip() if key else ''
+        
+        if key_lower in amount_map:
+            result['amount'] = _coerce_float(value)
+        elif key_lower in date_map:
+            result['income_date'] = _coerce_date(value)
+        elif key_lower in category_map:
+            cat_value = str(value).lower() if value else None
+            if cat_value:
+                for cat in IncomeCategory:
+                    if cat.value == cat_value or cat.name.lower() == cat_value:
+                        result['category'] = cat
+                        break
+        elif key_lower in description_map:
+            result['description'] = str(value) if value else None
+        elif key_lower in is_actual_map:
+            result['is_actual'] = bool(value) if value is not None else False
+    
+    return result
+
+
+def _map_expense_from_row(row: Dict[str, Any], user_id: int) -> Dict[str, Any]:
+    """Маппинг строки данных в модель Expense"""
+    amount_map = {'amount', 'сумма', 'расход'}
+    date_map = {'due_date', 'date', 'дата_расхода', 'дата', 'срок_оплаты'}
+    category_map = {'category', 'категория'}
+    description_map = {'description', 'desc', 'описание', 'комментарий'}
+    is_mandatory_map = {'is_mandatory', 'mandatory', 'обязательный'}
+    is_completed_map = {'is_completed', 'completed', 'выполнен'}
+    
+    result = {'user_id': user_id}
+    
+    for key, value in row.items():
+        key_lower = key.lower().strip() if key else ''
+        
+        if key_lower in amount_map:
+            result['amount'] = _coerce_float(value)
+        elif key_lower in date_map:
+            result['due_date'] = _coerce_date(value)
+        elif key_lower in category_map:
+            cat_value = str(value).lower() if value else None
+            if cat_value:
+                for cat in ExpenseCategory:
+                    if cat.value == cat_value or cat.name.lower() == cat_value:
+                        result['category'] = cat
+                        break
+        elif key_lower in description_map:
+            result['description'] = str(value) if value else None
+        elif key_lower in is_mandatory_map:
+            result['is_mandatory'] = bool(value) if value is not None else False
+        elif key_lower in is_completed_map:
+            result['is_completed'] = bool(value) if value is not None else False
+    
+    return result
+
+
+def _map_credit_card_from_row(row: Dict[str, Any], user_id: int) -> Dict[str, Any]:
+    """Маппинг строки данных в модель CreditCard"""
+    card_name_map = {'card_name', 'card', 'название_карты', 'карта'}
+    grace_start_map = {'grace_start_date', 'grace_start', 'дата_начала_льготного', 'дата_начала'}
+    grace_period_map = {'grace_period_days', 'grace_period', 'льготный_период', 'дней_льготного'}
+    current_debt_map = {'current_debt', 'debt', 'текущий_долг', 'долг'}
+    comment_map = {'comment', 'comments', 'комментарий', 'примечание'}
+    
+    result = {'user_id': user_id}
+    
+    for key, value in row.items():
+        key_lower = key.lower().strip() if key else ''
+        
+        if key_lower in card_name_map:
+            result['card_name'] = str(value) if value else None
+        elif key_lower in grace_start_map:
+            result['grace_start_date'] = _coerce_date(value)
+        elif key_lower in grace_period_map:
+            result['grace_period_days'] = int(value) if value else 30
+        elif key_lower in current_debt_map:
+            result['current_debt'] = _coerce_float(value) or 0.0
+        elif key_lower in comment_map:
+            result['comment'] = str(value) if value else None
+    
+    return result
+
+
+@app.post("/xlsx/import", response_model=XLSXImportResult)
+async def import_xlsx_to_database(
+    file: UploadFile = File(..., description="XLSX файл для импорта"),
+    sheet_name: str | None = Query(default=None, description="Имя листа (по умолчанию первый)"),
+    entity_type: str = Query(default="auto", description="Тип данных: debt, income, expense, credit_card, auto"),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Импорт данных из XLSX файла в базу данных
+    
+    Поддерживаемые типы сущностей:
+    - debt: Долги (Debts)
+    - income: Доходы (Incomes)
+    - expense: Расходы (Expenses)
+    - credit_card: Кредитные карты (CreditCards)
+    - auto: Автоматическое определение по названию листа
+    """
+    if not file.filename.lower().endswith('.xlsx'):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Файл должен быть в формате XLSX"
+        )
+    
+    try:
+        contents = await file.read()
+        
+        # Используем BytesIO для правильного чтения содержимого
+        from io import BytesIO
+        excel_file = BytesIO(contents)
+        
+        # Если sheet_name не указан, читаем первый лист явно
+        if sheet_name is None:
+            temp_df = pd.ExcelFile(excel_file)
+            sheet_name = temp_df.sheet_names[0] if temp_df.sheet_names else None
+            temp_df.close()
+            excel_file = BytesIO(contents)  # Пересоздаем BytesIO
+        
+        df = pd.read_excel(excel_file, sheet_name=sheet_name)
+        
+        if not hasattr(df, 'empty') or (hasattr(df, 'empty') and df.empty):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Файл не содержит данных"
+            )
+        
+        # Автоопределение типа сущности
+        actual_sheet_name = sheet_name or (df.sheet_name if hasattr(df, 'sheet_name') else "Sheet1")
+        if entity_type == "auto":
+            sheet_lower = actual_sheet_name.lower()
+            if 'debt' in sheet_lower or 'долг' in sheet_lower or 'кредитор' in sheet_lower:
+                entity_type = "debt"
+            elif 'income' in sheet_lower or 'доход' in sheet_lower:
+                entity_type = "income"
+            elif 'expense' in sheet_lower or 'расход' in sheet_lower:
+                entity_type = "expense"
+            elif 'credit' in sheet_lower or 'карт' in sheet_lower:
+                entity_type = "credit_card"
+            else:
+                # По умолчанию пытаемся определить по колонкам
+                cols_lower = [str(c).lower() for c in df.columns]
+                if any(c in cols_lower for c in ['creditor', 'кредитор', 'principal']):
+                    entity_type = "debt"
+                elif any(c in cols_lower for c in ['income', 'доход']) and 'amount' in cols_lower:
+                    entity_type = "income"
+                elif any(c in cols_lower for c in ['expense', 'расход']) and 'amount' in cols_lower:
+                    entity_type = "expense"
+                elif any(c in cols_lower for c in ['card', 'карта', 'grace']):
+                    entity_type = "credit_card"
+                else:
+                    entity_type = "debt"  # Default
+        
+        result = XLSXImportResult(
+            filename=file.filename,
+            sheet_name=actual_sheet_name,
+            total_rows=len(df),
+            inserted=0,
+            updated=0,
+            skipped=0,
+            errors=[]
+        )
+        
+        # Преобразуем строки в словари
+        rows_data = []
+        for _, row in df.iterrows():
+            row_dict = {}
+            for col, value in row.items():
+                if pd.isna(value):
+                    row_dict[str(col)] = None
+                elif isinstance(value, (pd.Timestamp, datetime)):
+                    row_dict[str(col)] = value.isoformat()
+                elif isinstance(value, (int, float, str)):
+                    row_dict[str(col)] = value
+                else:
+                    row_dict[str(col)] = str(value)
+            rows_data.append(row_dict)
+        
+        moderation_status = RecordStatus.APPROVED if current_user.role == UserRole.ADMIN else RecordStatus.PENDING
+        
+        if entity_type == "debt":
+            for idx, row in enumerate(rows_data):
+                try:
+                    mapped = _map_debt_from_row(row, current_user.id)
+                    
+                    # Проверка обязательных полей
+                    if not mapped.get('creditor_name') or not mapped.get('principal_amount') or not mapped.get('start_date'):
+                        result.errors.append({
+                            "row": idx + 1,
+                            "error": "Отсутствуют обязательные поля (кредитор, сумма, дата начала)"
+                        })
+                        result.skipped += 1
+                        continue
+                    
+                    # Проверка на дубликат
+                    existing = db.scalar(
+                        select(Debt).where(
+                            Debt.user_id == current_user.id,
+                            Debt.creditor_name == mapped['creditor_name'],
+                            Debt.start_date == mapped['start_date']
+                        )
+                    )
+                    
+                    if existing:
+                        # Обновление существующей записи
+                        for key, value in mapped.items():
+                            if hasattr(existing, key) and value is not None:
+                                setattr(existing, key, value)
+                        existing.moderation_status = moderation_status
+                        if moderation_status == RecordStatus.APPROVED:
+                            existing.approved_by_id = current_user.id
+                            existing.approved_at = datetime.utcnow()
+                        result.updated += 1
+                    else:
+                        # Создание новой записи
+                        debt = Debt(
+                            **mapped,
+                            moderation_status=moderation_status,
+                            approved_by_id=current_user.id if moderation_status == RecordStatus.APPROVED else None,
+                            approved_at=datetime.utcnow() if moderation_status == RecordStatus.APPROVED else None
+                        )
+                        db.add(debt)
+                        result.inserted += 1
+                        
+                except Exception as e:
+                    result.errors.append({"row": idx + 1, "error": str(e)})
+                    result.skipped += 1
+            
+            db.commit()
+            
+        elif entity_type == "income":
+            for idx, row in enumerate(rows_data):
+                try:
+                    mapped = _map_income_from_row(row, current_user.id)
+                    
+                    if not mapped.get('amount') or not mapped.get('income_date'):
+                        result.errors.append({
+                            "row": idx + 1,
+                            "error": "Отсутствуют обязательные поля (сумма, дата)"
+                        })
+                        result.skipped += 1
+                        continue
+                    
+                    income = Income(
+                        **mapped,
+                        moderation_status=moderation_status,
+                        approved_by_id=current_user.id if moderation_status == RecordStatus.APPROVED else None,
+                        approved_at=datetime.utcnow() if moderation_status == RecordStatus.APPROVED else None
+                    )
+                    db.add(income)
+                    result.inserted += 1
+                    
+                except Exception as e:
+                    result.errors.append({"row": idx + 1, "error": str(e)})
+                    result.skipped += 1
+            
+            db.commit()
+            
+        elif entity_type == "expense":
+            for idx, row in enumerate(rows_data):
+                try:
+                    mapped = _map_expense_from_row(row, current_user.id)
+                    
+                    if not mapped.get('amount') or not mapped.get('due_date'):
+                        result.errors.append({
+                            "row": idx + 1,
+                            "error": "Отсутствуют обязательные поля (сумма, дата)"
+                        })
+                        result.skipped += 1
+                        continue
+                    
+                    expense = Expense(
+                        **mapped,
+                        moderation_status=moderation_status,
+                        approved_by_id=current_user.id if moderation_status == RecordStatus.APPROVED else None,
+                        approved_at=datetime.utcnow() if moderation_status == RecordStatus.APPROVED else None
+                    )
+                    db.add(expense)
+                    result.inserted += 1
+                    
+                except Exception as e:
+                    result.errors.append({"row": idx + 1, "error": str(e)})
+                    result.skipped += 1
+            
+            db.commit()
+            
+        elif entity_type == "credit_card":
+            for idx, row in enumerate(rows_data):
+                try:
+                    mapped = _map_credit_card_from_row(row, current_user.id)
+                    
+                    if not mapped.get('card_name') or not mapped.get('grace_start_date'):
+                        result.errors.append({
+                            "row": idx + 1,
+                            "error": "Отсутствуют обязательные поля (название карты, дата начала)"
+                        })
+                        result.skipped += 1
+                        continue
+                    
+                    credit_card = CreditCard(
+                        **mapped,
+                        moderation_status=moderation_status,
+                        approved_by_id=current_user.id if moderation_status == RecordStatus.APPROVED else None,
+                        approved_at=datetime.utcnow() if moderation_status == RecordStatus.APPROVED else None
+                    )
+                    db.add(credit_card)
+                    result.inserted += 1
+                    
+                except Exception as e:
+                    result.errors.append({"row": idx + 1, "error": str(e)})
+                    result.skipped += 1
+            
+            db.commit()
+        
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Неподдерживаемый тип сущности: {entity_type}"
+            )
+        
+        # Логирование
+        _log_action(
+            db,
+            "xlsx.import",
+            actor_user_id=current_user.id,
+            details=f"file={file.filename}, sheet={actual_sheet_name}, type={entity_type}, inserted={result.inserted}"
+        )
+        
+        return result
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Ошибка при импорте: {str(e)}"
+        )
