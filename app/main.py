@@ -22,6 +22,7 @@ from .models import (
     CreditCardStatus,
     Creditor,
     Debt,
+    DebtHistory,
     DebtRepayment,
     DebtStatus,
     Expense,
@@ -44,11 +45,13 @@ from .schemas import (
     CreditCardIssuerUpdate,
     CreditCardRead,
     CreditorCreate,
+    CreditorDebtHistory,
     CreditorRead,
     CreditorUpdate,
     DailyBudgetResponse,
     DebtChangeAnalysis,
     DebtCreate,
+    DebtHistoryRead,
     DebtRead,
     DebtRepaymentCreate,
     DebtRepaymentRead,
@@ -1798,3 +1801,74 @@ def delete_credit_card_issuer(issuer_id: int, db: Session = Depends(get_db), adm
     db.delete(issuer)
     db.commit()
     return {"message": "Эмитент удалён."}
+
+
+# ==================== DEBT HISTORY ENDPOINTS ====================
+
+@app.get("/debt-history", response_model=list[CreditorDebtHistory])
+def get_debt_history(
+    creditor: str | None = Query(default=None, description="Фильтр по конкретному кредитору"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Получить историю изменения долгов по всем кредиторам или по конкретному кредитору.
+    Возвращает полную историю с датами и суммами задолженностей.
+    """
+    stmt = select(DebtHistory).order_by(DebtHistory.creditor, DebtHistory.record_date)
+    
+    if creditor:
+        stmt = stmt.where(DebtHistory.creditor == creditor)
+    
+    records = db.scalars(stmt).all()
+    
+    # Группируем данные по кредиторам
+    from collections import defaultdict
+    creditors_data = defaultdict(list)
+    
+    for record in records:
+        creditors_data[record.creditor].append(record)
+    
+    result = []
+    for creditor_name, history_records in creditors_data.items():
+        amounts = [r.amount for r in history_records]
+        result.append(CreditorDebtHistory(
+            creditor=creditor_name,
+            history=[DebtHistoryRead.model_validate(r) for r in history_records],
+            current_amount=amounts[-1] if amounts else 0.0,
+            min_amount=min(amounts) if amounts else 0.0,
+            max_amount=max(amounts) if amounts else 0.0,
+        ))
+    
+    return result
+
+
+@app.get("/debt-history/{creditor_name}", response_model=CreditorDebtHistory)
+def get_debt_history_by_creditor(
+    creditor_name: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Получить историю изменения долга по конкретному кредитору.
+    """
+    stmt = select(DebtHistory).where(
+        DebtHistory.creditor == creditor_name
+    ).order_by(DebtHistory.record_date)
+    
+    records = db.scalars(stmt).all()
+    
+    if not records:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, 
+            detail=f"История по кредитору '{creditor_name}' не найдена"
+        )
+    
+    amounts = [r.amount for r in records]
+    return CreditorDebtHistory(
+        creditor=creditor_name,
+        history=[DebtHistoryRead.model_validate(r) for r in records],
+        current_amount=amounts[-1] if amounts else 0.0,
+        min_amount=min(amounts) if amounts else 0.0,
+        max_amount=max(amounts) if amounts else 0.0,
+    )

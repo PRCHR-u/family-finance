@@ -11,8 +11,16 @@ export function AuthProvider({ children }) {
     const token = localStorage.getItem('token');
     const storedUser = localStorage.getItem('user');
     
-    if (token && storedUser) {
-      setUser(JSON.parse(storedUser));
+    if (token && storedUser && storedUser !== 'undefined' && storedUser !== 'null') {
+      try {
+        setUser(JSON.parse(storedUser));
+      } catch (e) {
+        console.error('Failed to parse user from localStorage', e);
+        localStorage.removeItem('user');
+        localStorage.removeItem('token');
+        setLoading(false);
+        return;
+      }
       // Optionally validate token by fetching current user
       authService.getCurrentUser()
         .then(userData => {
