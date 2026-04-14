@@ -1,3 +1,10 @@
+import { useState } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useAuth } from '../context/AuthContext';
+import { debtService } from '../api/services';
+import { creditorService } from '../api/services';
+import { Navigate } from 'react-router-dom';
+
 export default function DebtsPage() {
   const queryClient = useQueryClient();
   const { isAdmin } = useAuth();
@@ -317,72 +324,3 @@ function PrivateRoute({ children, adminOnly = false }) {
   
   return children;
 }
-
-export const router = createBrowserRouter([
-  {
-    path: '/login',
-    element: <LoginPage />,
-  },
-  {
-    path: '/register',
-    element: <RegisterPage />,
-  },
-  {
-    path: '/',
-    element: (
-      <PrivateRoute>
-        <Layout />
-      </PrivateRoute>
-    ),
-    children: [
-      {
-        index: true,
-        element: <Navigate to="/dashboard" replace />,
-      },
-      {
-        path: 'dashboard',
-        element: <DashboardPage />,
-      },
-      {
-        path: 'debts',
-        element: <DebtsPage />,
-      },
-      {
-        path: 'expenses',
-        element: <ExpensesPage />,
-      },
-      {
-        path: 'incomes',
-        element: <IncomesPage />,
-      },
-      {
-        path: 'credit-cards',
-        element: <CreditCardsPage />,
-      },
-      {
-        path: 'pending',
-        element: (
-          <PrivateRoute adminOnly>
-            <PendingPage />
-          </PrivateRoute>
-        ),
-      },
-      {
-        path: 'users',
-        element: (
-          <PrivateRoute adminOnly>
-            <UsersPage />
-          </PrivateRoute>
-        ),
-      },
-      {
-        path: 'audit-logs',
-        element: (
-          <PrivateRoute adminOnly>
-            <AuditLogsPage />
-          </PrivateRoute>
-        ),
-      },
-    ],
-  },
-]);
