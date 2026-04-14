@@ -301,3 +301,15 @@ export const creditCardIssuerService = {
     return response.data;
   },
 };
+
+export const debtHistoryService = {
+  getAll: async () => {
+    const response = await api.get('/debt-history');
+    return response.data;
+  },
+
+  getByCreditor: async (creditorName) => {
+    const response = await api.get(`/debt-history/${encodeURIComponent(creditorName)}`);
+    return response.data;
+  },
+};
