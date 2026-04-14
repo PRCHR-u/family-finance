@@ -15,7 +15,17 @@ const AuditLogsPage = () => <div className="p-6"><h1 className="text-2xl font-bo
 
 function PrivateRoute({ children, adminOnly = false }) {
   const token = localStorage.getItem('token');
-  const user = JSON.parse(localStorage.getItem('user') || 'null');
+  const userStr = localStorage.getItem('user');
+  let user = null;
+  
+  try {
+    if (userStr && userStr !== 'undefined' && userStr !== 'null') {
+      user = JSON.parse(userStr);
+    }
+  } catch (e) {
+    console.error('Failed to parse user from localStorage:', e);
+    user = null;
+  }
   
   if (!token) {
     return <Navigate to="/login" replace />;
