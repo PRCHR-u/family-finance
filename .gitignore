@@ -1,25 +1,14 @@
 ```
-# Build artifacts
-static/assets/
-dist/
-build/
-*.js
-*.css
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
 
-# Dependencies
-node_modules/
+# Database
+family_finance.db
 
-# Editors
-.vscode/
-.idea/
-
-# Logs and temp files
+# Logs
 *.log
-*.tmp
-*.swp
-
-# Environment
-.env
-.env.local
-*.env.*
+server.log
 ```
