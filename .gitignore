@@ -1,18 +1,1 @@
-```
-# Python
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
-
-# Logs
-*.log
-
-# Dependencies
-node_modules/
-
-# Environment
-.env
-.env.local
-.env.*
-```
+(frontend/src/index.css is a source file, and there are no build artifacts, dependencies, or temp files in the changes)
