@@ -5,6 +5,7 @@ from pathlib import Path
 
 import openpyxl
 from fastapi import Depends, FastAPI, HTTPException, Query, status
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response
 from fastapi.security import OAuth2PasswordBearer
 from fastapi.staticfiles import StaticFiles
@@ -68,6 +69,16 @@ from .schemas import (
 )
 
 app = FastAPI(title="Family Finance API")
+
+# CORS middleware configuration
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 
