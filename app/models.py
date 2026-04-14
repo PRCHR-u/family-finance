@@ -246,3 +246,14 @@ class Expense(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow
     )
+
+
+class DebtHistory(Base):
+    """История изменения долгов по кредиторам."""
+    __tablename__ = "debt_history"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    creditor: Mapped[str] = mapped_column(String(120), nullable=False, index=True)
+    amount: Mapped[float] = mapped_column(Float, nullable=False)
+    record_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)

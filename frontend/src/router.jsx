@@ -4,6 +4,7 @@ import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
 import DashboardPage from './pages/DashboardPage';
 import DebtsPage from './pages/DebtsPage';
+import DebtHistoryPage from './pages/DebtHistoryPage';
 import ExpensesPage from './pages/ExpensesPage';
 import IncomesPage from './pages/IncomesPage';
 
@@ -66,6 +67,10 @@ export const router = createBrowserRouter([
       {
         path: 'debts',
         element: <DebtsPage />,
+      },
+      {
+        path: 'debt-history',
+        element: <DebtHistoryPage />,
       },
       {
         path: 'expenses',

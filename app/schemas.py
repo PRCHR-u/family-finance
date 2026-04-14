@@ -215,6 +215,18 @@ class FinanceRecordRead(FinanceRecordBase):
         from_attributes = True
 
 
+class DebtHistoryRead(BaseModel):
+    """Схема для чтения истории долгов."""
+    id: int
+    creditor: str
+    amount: float
+    record_date: date
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
 class DebtSummary(BaseModel):
     period_from: date
     period_to: date
@@ -225,6 +237,15 @@ class DebtSummary(BaseModel):
     total_income: float
     total_mandatory_expense: float
     total_urgent_creditcard_repayment: float
+
+
+class CreditorDebtHistory(BaseModel):
+    """История долгов по конкретному кредитору."""
+    creditor: str
+    history: list[DebtHistoryRead]
+    current_amount: float
+    min_amount: float
+    max_amount: float
 
 
 # ==================== BUDGET ANALYSIS SCHEMAS ====================
