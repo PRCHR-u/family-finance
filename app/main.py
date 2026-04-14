@@ -837,11 +837,23 @@ def reject_record(record_id: int, db: Session = Depends(get_db), admin: User = D
 
 @app.get("/analytics/debt-summary", response_model=DebtSummary)
 def debt_summary(
-    period_from: date,
-    period_to: date,
+    period: str = "month",
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    # Определяем диапазон дат на основе периода
+    today = date.today()
+    if period == "month":
+        period_from = today.replace(day=1)
+        period_to = today
+    elif period == "year":
+        period_from = today.replace(month=1, day=1)
+        period_to = today
+    else:
+        # По умолчанию берем текущий месяц
+        period_from = today.replace(day=1)
+        period_to = today
+
     if period_from > period_to:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Неверный диапазон дат.")
 
