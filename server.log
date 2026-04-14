@@ -1,20 +1,8 @@
+nohup: ignoring input
 OpenBLAS WARNING - could not determine the L2 cache size on this system, assuming 256k
-INFO:     Started server process [581]
+INFO:     Started server process [733]
 INFO:     Waiting for application startup.
 INFO:     Application startup complete.
 INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
-Администратор создан: admin (admin@example.com)
 База данных инициализирована успешно
-INFO:     127.0.0.1:44812 - "GET /docs HTTP/1.1" 200 OK
-INFO:     127.0.0.1:44814 - "GET /api/creditors HTTP/1.1" 404 Not Found
-INFO:     127.0.0.1:44816 - "GET /creditors HTTP/1.1" 200 OK
-INFO:     127.0.0.1:44818 - "POST /login HTTP/1.1" 404 Not Found
-INFO:     127.0.0.1:44820 - "GET /openapi.json HTTP/1.1" 200 OK
-INFO:     127.0.0.1:44822 - "POST /auth/login HTTP/1.1" 422 Unprocessable Entity
-INFO:     127.0.0.1:44824 - "POST /auth/login HTTP/1.1" 200 OK
-INFO:     127.0.0.1:44826 - "POST /auth/login HTTP/1.1" 200 OK
-INFO:     127.0.0.1:44828 - "POST /creditors HTTP/1.1" 201 Created
-INFO:     127.0.0.1:44830 - "POST /auth/login HTTP/1.1" 200 OK
-INFO:     127.0.0.1:44832 - "POST /credit-card-issuers HTTP/1.1" 201 Created
-INFO:     127.0.0.1:44834 - "GET /creditors HTTP/1.1" 200 OK
-INFO:     127.0.0.1:44836 - "GET /credit-card-issuers HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59154 - "GET /assets/index-Br8uPels.js HTTP/1.1" 200 OK
