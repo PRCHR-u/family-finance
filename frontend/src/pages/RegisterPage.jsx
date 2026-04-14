@@ -32,7 +32,25 @@ export default function RegisterPage() {
       await register(email, password, fullName);
       navigate('/login', { state: { message: 'Регистрация успешна! Теперь войдите.' } });
     } catch (err) {
-      setError(err.response?.data?.detail || 'Ошибка регистрации');
+      let errorMessage = 'Ошибка регистрации';
+      
+      if (err.response?.data?.detail) {
+        const detail = err.response.data.detail;
+        // Если detail - это массив ошибок валидации
+        if (Array.isArray(detail)) {
+          errorMessage = detail.map(d => d.msg || JSON.stringify(d)).join('; ');
+        } 
+        // Если detail - это объект ошибки
+        else if (typeof detail === 'object') {
+          errorMessage = detail.msg || JSON.stringify(detail);
+        } 
+        // Если detail - это строка
+        else {
+          errorMessage = detail;
+        }
+      }
+      
+      setError(errorMessage);
     } finally {
       setLoading(false);
     }
