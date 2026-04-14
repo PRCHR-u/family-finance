@@ -199,7 +199,7 @@ export const repaymentService = {
 
 export const analyticsService = {
   getDebtAnalytics: async (params = {}) => {
-    const response = await api.get('/analytics/debt', { params });
+    const response = await api.get('/analytics/debt-summary', { params });
     return response.data;
   },
 
