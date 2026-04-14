@@ -30,8 +30,8 @@ export function AuthProvider({ children }) {
     }
   }, []);
 
-  const login = async (email, password) => {
-    const data = await authService.login(email, password);
+  const login = async (username, password) => {
+    const data = await authService.login(username, password);
     localStorage.setItem('token', data.access_token);
     setUser(data.user);
     localStorage.setItem('user', JSON.stringify(data.user));
@@ -44,8 +44,8 @@ export function AuthProvider({ children }) {
     setUser(null);
   };
 
-  const register = async (email, password, full_name) => {
-    const data = await authService.register(email, password, full_name);
+  const register = async (username, password, full_name) => {
+    const data = await authService.register(username, password, full_name);
     return data;
   };
 
