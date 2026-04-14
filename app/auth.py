@@ -11,7 +11,14 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    return pwd_context.verify(plain_password, hashed_password)
+    try:
+        # bcrypt имеет ограничение на длину пароля в 72 байта
+        if plain_password and len(plain_password.encode('utf-8')) > 72:
+            plain_password = plain_password.encode('utf-8')[:72].decode('utf-8', errors='ignore')
+        return pwd_context.verify(plain_password, hashed_password)
+    except Exception:
+        # В случае любой ошибки (некорректный хеш, длина и т.д.) считаем пароль неверным
+        return False
 
 
 def get_password_hash(password: str) -> str:
