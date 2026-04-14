@@ -2,9 +2,11 @@ import csv
 from datetime import date, datetime, timedelta
 from io import StringIO
 from pathlib import Path
+from typing import List, Dict, Any
 
 import openpyxl
-from fastapi import Depends, FastAPI, HTTPException, Query, status
+import pandas as pd
+from fastapi import Depends, FastAPI, HTTPException, Query, UploadFile, File, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response
 from fastapi.security import OAuth2PasswordBearer
@@ -90,6 +92,20 @@ class ImportResult(BaseModel):
     inserted: int
     updated: int
     skipped: int
+
+
+class XLSXSheetData(BaseModel):
+    """Модель для данных листа XLSX"""
+    name: str
+    columns: List[str]
+    data: List[Dict[str, Any]]
+
+
+class XLSXFileInfo(BaseModel):
+    """Модель для информации о XLSX файле"""
+    filename: str
+    sheet_count: int
+    sheets: List[str]
 
 
 def _log_action(
@@ -1872,3 +1888,260 @@ def get_debt_history_by_creditor(
         min_amount=min(amounts) if amounts else 0.0,
         max_amount=max(amounts) if amounts else 0.0,
     )
+
+
+# ==================== XLSX INTERPRETER API ====================
+
+@app.post("/xlsx/upload", response_model=XLSXFileInfo)
+async def upload_xlsx(
+    file: UploadFile = File(..., description="XLSX файл для загрузки"),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Загрузка XLSX файла и получение информации о нём
+    """
+    if not file.filename.lower().endswith('.xlsx'):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Файл должен быть в формате XLSX"
+        )
+    
+    try:
+        contents = await file.read()
+        xlsx_file = pd.ExcelFile(contents)
+        sheet_names = xlsx_file.sheet_names
+        
+        return XLSXFileInfo(
+            filename=file.filename,
+            sheet_count=len(sheet_names),
+            sheets=sheet_names
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Ошибка при чтении файла: {str(e)}"
+        )
+
+
+@app.post("/xlsx/read", response_model=XLSXSheetData)
+async def read_xlsx_sheet(
+    file: UploadFile = File(..., description="XLSX файл"),
+    sheet_name: str | None = Query(default=None, description="Имя листа (по умолчанию первый)"),
+    head: int | None = Query(default=None, description="Количество строк для чтения"),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Чтение данных из указанного листа XLSX файла
+    """
+    if not file.filename.lower().endswith('.xlsx'):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Файл должен быть в формате XLSX"
+        )
+    
+    try:
+        contents = await file.read()
+        df = pd.read_excel(contents, sheet_name=sheet_name, nrows=head)
+        
+        # Преобразуем данные в JSON-сериализуемый формат
+        data = []
+        for _, row in df.iterrows():
+            row_dict = {}
+            for col, value in row.items():
+                if pd.isna(value):
+                    row_dict[str(col)] = None
+                elif isinstance(value, (pd.Timestamp, datetime)):
+                    row_dict[str(col)] = value.isoformat()
+                elif isinstance(value, (int, float, str)):
+                    row_dict[str(col)] = value
+                else:
+                    row_dict[str(col)] = str(value)
+            data.append(row_dict)
+        
+        return XLSXSheetData(
+            name=sheet_name or df.sheet_name if hasattr(df, 'sheet_name') else "Sheet1",
+            columns=[str(col) for col in df.columns],
+            data=data
+        )
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Лист не найден: {str(e)}"
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Ошибка при чтении файла: {str(e)}"
+        )
+
+
+@app.post("/xlsx/to-json")
+async def xlsx_to_json(
+    file: UploadFile = File(..., description="XLSX файл"),
+    sheet_name: str | None = Query(default=None, description="Имя листа"),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Конвертация XLSX листа в JSON формат
+    """
+    if not file.filename.lower().endswith('.xlsx'):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Файл должен быть в формате XLSX"
+        )
+    
+    try:
+        contents = await file.read()
+        df = pd.read_excel(contents, sheet_name=sheet_name)
+        
+        # Преобразуем NaN в None для JSON сериализации
+        data = df.where(pd.notna(df), None).to_dict(orient='records')
+        
+        # Обработка дат и других специальных типов
+        for row in data:
+            for key, value in row.items():
+                if isinstance(value, (pd.Timestamp, datetime)):
+                    row[key] = value.isoformat()
+        
+        return Response(
+            content=json.dumps(data, indent=2, default=str),
+            media_type="application/json"
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Ошибка при конвертации: {str(e)}"
+        )
+
+
+@app.post("/xlsx/to-csv")
+async def xlsx_to_csv(
+    file: UploadFile = File(..., description="XLSX файл"),
+    sheet_name: str | None = Query(default=None, description="Имя листа"),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Конвертация XLSX листа в CSV формат
+    """
+    if not file.filename.lower().endswith('.xlsx'):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Файл должен быть в формате XLSX"
+        )
+    
+    try:
+        contents = await file.read()
+        df = pd.read_excel(contents, sheet_name=sheet_name)
+        
+        csv_buffer = StringIO()
+        df.to_csv(csv_buffer, index=False, encoding='utf-8-sig')
+        csv_content = csv_buffer.getvalue()
+        
+        filename = Path(file.filename).stem + ".csv"
+        
+        return Response(
+            content=csv_content,
+            media_type="text/csv",
+            headers={"Content-Disposition": f"attachment; filename={filename}"}
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Ошибка при конвертации: {str(e)}"
+        )
+
+
+@app.get("/xlsx/info/{filename:path}", response_model=XLSXFileInfo)
+async def get_xlsx_info(
+    filename: str,
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Получение информации о XLSX файле на сервере
+    """
+    file_path = Path(filename)
+    if not file_path.is_absolute():
+        file_path = Path.cwd() / file_path
+    
+    if not file_path.exists():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Файл не найден"
+        )
+    
+    if not file_path.suffix.lower() == '.xlsx':
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Файл должен быть в формате XLSX"
+        )
+    
+    try:
+        xlsx_file = pd.ExcelFile(file_path)
+        sheet_names = xlsx_file.sheet_names
+        
+        return XLSXFileInfo(
+            filename=file_path.name,
+            sheet_count=len(sheet_names),
+            sheets=sheet_names
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Ошибка при чтении файла: {str(e)}"
+        )
+
+
+@app.get("/xlsx/read/{filename:path}", response_model=XLSXSheetData)
+async def read_server_xlsx(
+    filename: str,
+    sheet_name: str | None = Query(default=None, description="Имя листа"),
+    head: int | None = Query(default=None, description="Количество строк"),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Чтение данных из XLSX файла на сервере
+    """
+    file_path = Path(filename)
+    if not file_path.is_absolute():
+        file_path = Path.cwd() / file_path
+    
+    if not file_path.exists():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Файл не найден"
+        )
+    
+    if not file_path.suffix.lower() == '.xlsx':
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Файл должен быть в формате XLSX"
+        )
+    
+    try:
+        df = pd.read_excel(file_path, sheet_name=sheet_name, nrows=head)
+        
+        # Преобразуем данные в JSON-сериализуемый формат
+        data = []
+        for _, row in df.iterrows():
+            row_dict = {}
+            for col, value in row.items():
+                if pd.isna(value):
+                    row_dict[str(col)] = None
+                elif isinstance(value, (pd.Timestamp, datetime)):
+                    row_dict[str(col)] = value.isoformat()
+                elif isinstance(value, (int, float, str)):
+                    row_dict[str(col)] = value
+                else:
+                    row_dict[str(col)] = str(value)
+            data.append(row_dict)
+        
+        return XLSXSheetData(
+            name=sheet_name or "Sheet1",
+            columns=[str(col) for col in df.columns],
+            data=data
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Ошибка при чтении файла: {str(e)}"
+        )
