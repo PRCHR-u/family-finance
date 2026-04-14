@@ -4,24 +4,11 @@ __pycache__/
 *.pyc
 *.pyo
 *.pyd
-.Python
-env/
-venv/
-.venv/
-.ENV
-.ENV.*
-.venv/
-.venv.*
 
 # Database
-*.db
-*.db-journal
+family_finance.db
 
 # Logs
 *.log
-
-# Environment
-.env
-.env.local
-.env.*
+server.log
 ```

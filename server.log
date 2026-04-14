@@ -1,8 +1,20 @@
 nohup: ignoring input
 OpenBLAS WARNING - could not determine the L2 cache size on this system, assuming 256k
-INFO:     Started server process [593]
+INFO:     Started server process [466]
 INFO:     Waiting for application startup.
 INFO:     Application startup complete.
 INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+Таблица debt_history уже содержит 553 записей. Пропускаем импорт.
 База данных инициализирована успешно
-INFO:     127.0.0.1:49084 - "POST /auth/login HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59642 - "GET /debt-history HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:59644 - "GET /docs HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59646 - "POST /auth/login HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59648 - "POST /auth/login HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59650 - "GET /debt-history HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:59652 - "POST /auth/login HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59654 - "GET /debt-history HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:59656 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59658 - "POST /auth/login HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59660 - "GET /debts HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59662 - "POST /auth/login HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59664 - "GET /creditors HTTP/1.1" 404 Not Found
