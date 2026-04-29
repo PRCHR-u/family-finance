@@ -1,4 +1,13 @@
 ```
-# Logs and temp files
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Database
+*.db
+
+# Logs
 *.log
 ```

@@ -1015,6 +1015,63 @@ def get_budget_summary_endpoint(
     return result
 
 
+@app.get("/analytics/debt-timeline", response_model=list)
+def get_debt_timeline(
+    start_date: date,
+    end_date: date,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    История изменения долгов по датам (как в таблице Excel Sheet1).
+    
+    Возвращает список записей с полями:
+    - date: дата
+    - creditors: словарь {кредитор: сумма}
+    - total_debt: общий долг на дату
+    - debt_change: изменение долга с предыдущей даты
+    """
+    from .budget_utils import get_debt_history_timeline
+    
+    if start_date > end_date:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Неверный диапазон дат.")
+    
+    return get_debt_history_timeline(db, current_user, start_date, end_date)
+
+
+@app.get("/analytics/seasonal-debt", response_model=dict)
+def get_seasonal_debt(
+    year: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Агрегированные показатели долга по сезонам (аналог листа 'сезоны' в Excel).
+    
+    Возвращает данные по сезонам: зима, весна, лето, осень.
+    Для каждого сезона: opening_debt, closing_debt, debt_change.
+    """
+    from .budget_utils import get_seasonal_debt_summary
+    
+    return get_seasonal_debt_summary(db, current_user, year)
+
+
+@app.get("/analytics/yearly-debt", response_model=dict)
+def get_yearly_debt(
+    year: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Агрегированные показатели долга за год (аналог листа 'годы' в Excel).
+    
+    Возвращает: opening_debt, closing_debt, debt_change за указанный год.
+    """
+    from .budget_utils import get_yearly_debt_summary
+    
+    return get_yearly_debt_summary(db, current_user, year)
+
+
 @app.post("/imports/excel", response_model=ImportResult)
 def import_excel(
     file_path: str = "ДОЛГИ.xlsx",
@@ -1226,6 +1283,50 @@ def import_excel(
     )
     db.commit()
     return ImportResult(inserted=inserted_debts + inserted_incomes + inserted_expenses, updated=updated, skipped=skipped)
+
+
+@app.post("/imports/excel-full", response_model=Dict[str, Any])
+def import_excel_full(
+    file_path: str = "ДОЛГИ.xlsx",
+    overwrite: bool = False,
+    target_user_id: int | None = None,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin),
+):
+    """
+    Расширенный импорт всех листов из Excel файла ДОЛГИ.xlsx:
+    - Sheet1: история долгов по кредиторам с расчётом изменений (разница между датами)
+    - льготные периоды: кредитные карты с суммами к погашению на даты
+    - траты: обязательные расходы с категориями и датами
+    - доход: доходы с категориями и датами
+    
+    Воспроизводит логику расчётов "как в таблице".
+    """
+    from .xlsx_full_import import import_full_xlsx
+    
+    try:
+        result = import_full_xlsx(
+            db=db,
+            file_path=file_path,
+            target_user_id=target_user_id,
+            overwrite=overwrite,
+        )
+        
+        _log_action(
+            db,
+            "imports.excel_full",
+            actor_user_id=admin.id,
+            target_user_id=target_user_id or admin.id,
+            details=f"file={file_path}, sheets={result['sheets_processed']}, inserted={result['summary']['inserted']}, updated={result['summary']['updated']}, skipped={result['summary']['skipped']}",
+        )
+        
+        return result
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Ошибка импорта: {str(e)}")
 
 
 # ==================== INCOME ENDPOINTS ====================

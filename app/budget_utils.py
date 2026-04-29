@@ -7,7 +7,7 @@ from typing import Optional
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from .models import Debt, DebtRepayment, Expense, FinanceRecord, Income, RecordStatus, User, UserRole
+from .models import Debt, DebtRepayment, Expense, FinanceRecord, Income, RecordStatus, User, UserRole, DebtHistory
 
 
 def get_debt_change_analysis(
@@ -89,6 +89,159 @@ def get_debt_change_analysis(
         "debt_increase": debt_increase,
         "debt_decrease": debt_decrease,
         "net_change": net_change,
+    }
+
+
+def get_debt_history_timeline(
+    db: Session,
+    current_user: User,
+    start_date: date,
+    end_date: date,
+) -> list:
+    """
+    Получает историю изменения долгов по датам из таблицы DebtHistory.
+    Воспроизводит логику Excel-таблицы с расчётом разницы между датами.
+    
+    Возвращает список записей с полями:
+    - date: дата записи
+    - creditors: словарь {кредитор: сумма}
+    - total_debt: общий долг на дату
+    - debt_change: изменение долга с предыдущей даты (None для первой записи)
+    """
+    history_stmt = select(DebtHistory).where(
+        DebtHistory.record_date >= start_date,
+        DebtHistory.record_date <= end_date,
+    ).order_by(DebtHistory.record_date.asc(), DebtHistory.creditor.asc())
+    
+    history_records = db.scalars(history_stmt).all()
+    
+    # Группируем по датам
+    from collections import defaultdict
+    debts_by_date = defaultdict(dict)
+    
+    for record in history_records:
+        debts_by_date[record.record_date][record.creditor] = record.amount
+    
+    # Формируем результат с вычислением изменений
+    timeline = []
+    prev_total = None
+    
+    for record_date in sorted(debts_by_date.keys()):
+        creditors_dict = debts_by_date[record_date]
+        total_debt = sum(creditors_dict.values())
+        debt_change = None if prev_total is None else total_debt - prev_total
+        
+        timeline.append({
+            "date": record_date,
+            "creditors": creditors_dict,
+            "total_debt": total_debt,
+            "debt_change": debt_change,
+        })
+        
+        prev_total = total_debt
+    
+    return timeline
+
+
+def get_seasonal_debt_summary(
+    db: Session,
+    current_user: User,
+    year: int,
+) -> dict:
+    """
+    Вычисляет агрегированные показатели долга по сезонам.
+    Аналогично листу 'сезоны' в Excel файле.
+    
+    Сезоны:
+    - Зима: декабрь (предыдущего года), январь, февраль
+    - Весна: март, апрель, май
+    - Лето: июнь, июль, август
+    - Осень: сентябрь, октябрь, ноябрь
+    """
+    from sqlalchemy import func
+    
+    def get_season_dates(season: str, year: int) -> tuple:
+        if season == "winter":
+            # Зима: декабрь прошлого года + январь и февраль текущего
+            start = date(year - 1, 12, 1)
+            end = date(year, 2, 28 if (year % 4 == 0 and (year % 100 != 0 or year % 400 == 0)) else 28)
+        elif season == "spring":
+            start = date(year, 3, 1)
+            end = date(year, 5, 31)
+        elif season == "summer":
+            start = date(year, 6, 1)
+            end = date(year, 8, 31)
+        elif season == "autumn":
+            start = date(year, 9, 1)
+            end = date(year, 11, 30)
+        else:
+            raise ValueError(f"Unknown season: {season}")
+        return start, end
+    
+    result = {}
+    
+    for season in ["winter", "spring", "summer", "autumn"]:
+        start, end = get_season_dates(season, year)
+        
+        # Берём долг на последнюю дату сезона
+        timeline = get_debt_history_timeline(db, current_user, start, end)
+        
+        if timeline:
+            closing_debt = timeline[-1]["total_debt"]
+            opening_debt = timeline[0]["total_debt"] if len(timeline) > 1 else 0
+            seasonal_change = closing_debt - opening_debt
+        else:
+            closing_debt = 0
+            opening_debt = 0
+            seasonal_change = 0
+        
+        season_name_ru = {
+            "winter": "зима",
+            "spring": "весна",
+            "summer": "лето",
+            "autumn": "осень",
+        }[season]
+        
+        result[season] = {
+            "name": season_name_ru,
+            "start_date": start,
+            "end_date": end,
+            "opening_debt": opening_debt,
+            "closing_debt": closing_debt,
+            "debt_change": seasonal_change,
+        }
+    
+    return result
+
+
+def get_yearly_debt_summary(
+    db: Session,
+    current_user: User,
+    year: int,
+) -> dict:
+    """
+    Вычисляет агрегированные показатели долга за год.
+    Аналогично листу 'годы' в Excel файле.
+    """
+    start = date(year, 1, 1)
+    end = date(year, 12, 31)
+    
+    timeline = get_debt_history_timeline(db, current_user, start, end)
+    
+    if timeline:
+        opening_debt = timeline[0]["total_debt"]
+        closing_debt = timeline[-1]["total_debt"]
+        yearly_change = closing_debt - opening_debt
+    else:
+        opening_debt = 0
+        closing_debt = 0
+        yearly_change = 0
+    
+    return {
+        "year": year,
+        "opening_debt": opening_debt,
+        "closing_debt": closing_debt,
+        "debt_change": yearly_change,
     }
 
 
