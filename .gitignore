@@ -8,6 +8,21 @@ __pycache__/
 # Database
 family_finance.db
 
-# Logs
+# Environment
+.env
+.env.local
+*.env.*
+
+# Dependencies
+venv/
+.venv/
+.env/
+
+# Logs and temp files
 *.log
+*.tmp
+
+# Editors
+.vscode/
+.idea/
 ```

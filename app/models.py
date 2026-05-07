@@ -257,4 +257,65 @@ class DebtHistory(Base):
     creditor: Mapped[str] = mapped_column(String(120), nullable=False, index=True)
     amount: Mapped[float] = mapped_column(Float, nullable=False)
     record_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    debt_change: Mapped[float | None] = mapped_column(Float, nullable=True)  # Изменение долга с предыдущей даты
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class SeasonSummary(Base):
+    """Агрегированные данные по сезонам (из листа 'сезоны')."""
+    __tablename__ = "season_summaries"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
+    year: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    season: Mapped[str] = mapped_column(String(20), nullable=False, index=True)  # winter, spring, summer, autumn
+    opening_debt: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    closing_debt: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    debt_change: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    calculated_opening_debt: Mapped[float | None] = mapped_column(Float, nullable=True)  # Для валидации
+    calculated_closing_debt: Mapped[float | None] = mapped_column(Float, nullable=True)
+    calculated_debt_change: Mapped[float | None] = mapped_column(Float, nullable=True)
+    comment: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow
+    )
+
+
+class YearSummary(Base):
+    """Агрегированные данные по годам (из листа 'годы')."""
+    __tablename__ = "year_summaries"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
+    year: Mapped[int] = mapped_column(Integer, nullable=False, unique=True, index=True)
+    opening_debt: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    closing_debt: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    debt_change: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    calculated_opening_debt: Mapped[float | None] = mapped_column(Float, nullable=True)  # Для валидации
+    calculated_closing_debt: Mapped[float | None] = mapped_column(Float, nullable=True)
+    calculated_debt_change: Mapped[float | None] = mapped_column(Float, nullable=True)
+    comment: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow
+    )
+
+
+class WeeklyBudgetPlan(Base):
+    """Плановые суммы для трат по неделям (из листа 'Суммы для трат')."""
+    __tablename__ = "weekly_budget_plans"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
+    month: Mapped[int] = mapped_column(Integer, nullable=False, index=True)  # 1-12
+    year: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    week_number: Mapped[int] = mapped_column(Integer, nullable=False, index=True)  # 1-4 или 1-5
+    planned_amount: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    actual_amount: Mapped[float | None] = mapped_column(Float, nullable=True)
+    deviation: Mapped[float | None] = mapped_column(Float, nullable=True)  # Вычисляется как actual - planned
+    comment: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow
+    )

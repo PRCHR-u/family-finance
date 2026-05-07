@@ -18,7 +18,8 @@ from sqlalchemy import select
 
 from app.models import (
     User, UserRole, RecordStatus, Debt, DebtHistory, CreditCard,
-    Income, IncomeCategory, Expense, ExpenseCategory
+    Income, IncomeCategory, Expense, ExpenseCategory,
+    SeasonSummary, YearSummary, WeeklyBudgetPlan
 )
 
 
@@ -76,7 +77,7 @@ def parse_sheet1_debts(db: Session, target_user: User, admin: User, ws, overwrit
     """
     Парсит Sheet1 — историю долгов по кредиторам.
     Создает записи DebtHistory для каждого кредитора на каждую дату.
-    Вычисляет изменение общего долга между датами.
+    Вычисляет изменение общего долга между датами и сохраняет его в поле debt_change.
     """
     rows = list(ws.iter_rows(values_only=True))
     
@@ -139,6 +140,9 @@ def parse_sheet1_debts(db: Session, target_user: User, admin: User, ws, overwrit
     skipped = 0
     prev_total_debt = None
     
+    # Сортируем строки по дате для корректного вычисления изменения долга
+    date_rows.sort(key=lambda x: x[1])
+    
     # Обрабатываем каждую строку с датой
     for idx, row_date, row in date_rows:
         # Пропускаем строки-заголовки внутри данных
@@ -177,6 +181,11 @@ def parse_sheet1_debts(db: Session, target_user: User, admin: User, ws, overwrit
         if not creditors_debts:
             continue
         
+        # Вычисляем изменение долга (аналог столбца "разница" в Excel)
+        debt_change = None
+        if prev_total_debt is not None:
+            debt_change = total_debt - prev_total_debt
+        
         # Создаём записи DebtHistory для каждого кредитора
         for creditor_name, balance in creditors_debts.items():
             existing = db.scalar(
@@ -189,6 +198,7 @@ def parse_sheet1_debts(db: Session, target_user: User, admin: User, ws, overwrit
             if existing:
                 if overwrite:
                     existing.amount = balance
+                    existing.debt_change = debt_change
                     updated += 1
                 else:
                     skipped += 1
@@ -197,13 +207,10 @@ def parse_sheet1_debts(db: Session, target_user: User, admin: User, ws, overwrit
                     creditor=creditor_name,
                     amount=balance,
                     record_date=row_date,
+                    debt_change=debt_change,
                 )
                 db.add(history)
                 inserted += 1
-        
-        # Вычисляем изменение долга (аналог столбца "разница" в Excel)
-        if prev_total_debt is not None:
-            debt_change = total_debt - prev_total_debt
         
         prev_total_debt = total_debt
     
@@ -448,6 +455,221 @@ def parse_incomes(db: Session, target_user: User, admin: User, ws, overwrite: bo
         )
         db.add(income)
         inserted += 1
+    
+    return {"inserted": inserted, "updated": updated, "skipped": skipped}
+
+
+def parse_seasons(db: Session, target_user: User, admin: User, ws, overwrite: bool = False) -> Dict[str, int]:
+    """
+    Парсит лист 'сезоны'.
+    Сохраняет агрегированные данные по сезонам для валидации расчётов.
+    Формат: заголовок с названиями сезонов, значения долгов за каждый сезон.
+    """
+    rows = list(ws.iter_rows(values_only=True))
+    
+    inserted = 0
+    updated = 0
+    skipped = 0
+    
+    # Определяем год из контекста (предполагаем текущий или следующий)
+    current_year = date.today().year
+    
+    season_mapping = {
+        "ЗИМУ": "winter",
+        "ВЕСНУ": "spring", 
+        "ЛЕТО": "summer",
+        "ОСЕНЬ": "autumn",
+    }
+    
+    # Первая строка содержит заголовки, вторая - значения
+    if len(rows) < 2:
+        return {"inserted": inserted, "updated": updated, "skipped": skipped}
+    
+    headers = rows[0]
+    values = rows[1]
+    
+    for col_idx, header in enumerate(headers):
+        if not isinstance(header, str):
+            continue
+            
+        header_upper = header.upper()
+        season_name = None
+        
+        for ru_season, en_season in season_mapping.items():
+            if ru_season in header_upper:
+                season_name = en_season
+                break
+        
+        if not season_name:
+            continue
+        
+        debt_value = _coerce_float(values[col_idx] if len(values) > col_idx else None)
+        if debt_value is None:
+            continue
+        
+        # Создаём запись SeasonSummary
+        existing = db.scalar(
+            select(SeasonSummary).where(
+                SeasonSummary.user_id == target_user.id,
+                SeasonSummary.year == current_year,
+                SeasonSummary.season == season_name,
+            )
+        )
+        
+        if existing:
+            if overwrite:
+                existing.debt_change = debt_value
+                updated += 1
+            else:
+                skipped += 1
+        else:
+            season = SeasonSummary(
+                user_id=target_user.id,
+                year=current_year,
+                season=season_name,
+                debt_change=debt_value,
+                comment=f"Импортировано из Excel: {header}",
+            )
+            db.add(season)
+            inserted += 1
+    
+    return {"inserted": inserted, "updated": updated, "skipped": skipped}
+
+
+def parse_years(db: Session, target_user: User, admin: User, ws, overwrite: bool = False) -> Dict[str, int]:
+    """
+    Парсит лист 'годы'.
+    Сохраняет агрегированные данные по годам для валидации расчётов.
+    Формат: заголовок с годом (например, "ДОЛГ ЗА 2024 ГОД"), значение - изменение долга за год.
+    """
+    rows = list(ws.iter_rows(values_only=True))
+    
+    inserted = 0
+    updated = 0
+    skipped = 0
+    
+    if len(rows) < 2:
+        return {"inserted": inserted, "updated": updated, "skipped": skipped}
+    
+    headers = rows[0]
+    values = rows[1]
+    
+    import re
+    
+    for col_idx, header in enumerate(headers):
+        if not isinstance(header, str):
+            continue
+        
+        # Извлекаем год из заголовка
+        match = re.search(r'(\d{4})', header)
+        if not match:
+            continue
+        
+        year = int(match.group(1))
+        debt_value = _coerce_float(values[col_idx] if len(values) > col_idx else None)
+        
+        if debt_value is None:
+            continue
+        
+        existing = db.scalar(
+            select(YearSummary).where(
+                YearSummary.user_id == target_user.id,
+                YearSummary.year == year,
+            )
+        )
+        
+        if existing:
+            if overwrite:
+                existing.debt_change = debt_value
+                updated += 1
+            else:
+                skipped += 1
+        else:
+            year_summary = YearSummary(
+                user_id=target_user.id,
+                year=year,
+                debt_change=debt_value,
+                comment=f"Импортировано из Excel: {header}",
+            )
+            db.add(year_summary)
+            inserted += 1
+    
+    return {"inserted": inserted, "updated": updated, "skipped": skipped}
+
+
+def parse_weekly_budgets(db: Session, target_user: User, admin: User, ws, overwrite: bool = False) -> Dict[str, int]:
+    """
+    Парсит лист 'Суммы для трат'.
+    Сохраняет плановые суммы для трат по неделям.
+    """
+    rows = list(ws.iter_rows(values_only=True))
+    
+    inserted = 0
+    updated = 0
+    skipped = 0
+    
+    current_month = None
+    current_year = date.today().year
+    month_mapping = {
+        "ЯНВАРЬ": 1, "ФЕВРАЛЬ": 2, "МАРТ": 3, "АПРЕЛЬ": 4, "МАЙ": 5, "ИЮНЬ": 6,
+        "ИЮЛЬ": 7, "АВГУСТ": 8, "СЕНТЯБРЬ": 9, "ОКТЯБРЬ": 10, "НОЯБРЬ": 11, "ДЕКАБРЬ": 12,
+    }
+    
+    week_number = 1
+    
+    for row in rows:
+        if _is_empty_row(row, max_cols=4):
+            continue
+        
+        first_cell = row[0] if len(row) > 0 else None
+        
+        if isinstance(first_cell, str):
+            month_upper = first_cell.upper().strip()
+            
+            if "-" in first_cell and "." in first_cell:
+                # Строка с диапазонами дат для недель
+                week_number = 1
+                for col_idx in range(min(len(row), 4)):
+                    date_range = row[col_idx]
+                    if not isinstance(date_range, str) or "-" not in date_range:
+                        continue
+                    
+                    amount = _coerce_float(row[col_idx + 4] if len(row) > col_idx + 4 else None)
+                    if amount is None:
+                        continue
+                    
+                    existing = db.scalar(
+                        select(WeeklyBudgetPlan).where(
+                            WeeklyBudgetPlan.user_id == target_user.id,
+                            WeeklyBudgetPlan.year == current_year,
+                            WeeklyBudgetPlan.month == current_month,
+                            WeeklyBudgetPlan.week_number == week_number,
+                        )
+                    )
+                    
+                    if existing:
+                        if overwrite:
+                            existing.planned_amount = amount
+                            existing.comment = f"Неделя: {date_range}"
+                            updated += 1
+                        else:
+                            skipped += 1
+                    else:
+                        plan = WeeklyBudgetPlan(
+                            user_id=target_user.id,
+                            year=current_year,
+                            month=current_month if current_month else 1,
+                            week_number=week_number,
+                            planned_amount=amount,
+                            comment=f"Неделя: {date_range}",
+                        )
+                        db.add(plan)
+                        inserted += 1
+                    
+                    week_number += 1
+            elif month_upper in month_mapping:
+                current_month = month_mapping[month_upper]
+                week_number = 1
     
     return {"inserted": inserted, "updated": updated, "skipped": skipped}
 
