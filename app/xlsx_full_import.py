@@ -214,6 +214,7 @@ def parse_grace_periods(db: Session, target_user: User, admin: User, ws, overwri
     """
     Парсит лист 'льготные периоды'.
     Создаёт/обновляет записи CreditCard с суммами к погашению.
+    Добавляет planned_repayment_amount из колонки TOTAL.
     """
     rows = list(ws.iter_rows(values_only=True))
     
@@ -234,6 +235,8 @@ def parse_grace_periods(db: Session, target_user: User, admin: User, ws, overwri
         t_bank_amount = _coerce_float(row[1] if len(row) > 1 else None)
         # СБЕР (колонка C)
         sber_amount = _coerce_float(row[2] if len(row) > 2 else None)
+        # TOTAL (колонка D) - сумма к погашению
+        total_amount = _coerce_float(row[3] if len(row) > 3 else None)
         
         # Обработка Т-банка
         if t_bank_amount and t_bank_amount > 0:
@@ -249,6 +252,7 @@ def parse_grace_periods(db: Session, target_user: User, admin: User, ws, overwri
             if existing:
                 if overwrite:
                     existing.current_debt = t_bank_amount
+                    existing.planned_repayment_amount = total_amount if total_amount else t_bank_amount
                     updated += 1
                 else:
                     skipped += 1
@@ -262,6 +266,7 @@ def parse_grace_periods(db: Session, target_user: User, admin: User, ws, overwri
                     grace_start_date=grace_date,
                     grace_period_days=30,
                     current_debt=t_bank_amount,
+                    planned_repayment_amount=total_amount if total_amount else t_bank_amount,
                     status="active",
                     moderation_status=RecordStatus.APPROVED,
                     approved_by_id=admin.id,
@@ -284,6 +289,7 @@ def parse_grace_periods(db: Session, target_user: User, admin: User, ws, overwri
             if existing:
                 if overwrite:
                     existing.current_debt = sber_amount
+                    existing.planned_repayment_amount = total_amount if total_amount else sber_amount
                     updated += 1
                 else:
                     skipped += 1
@@ -294,6 +300,7 @@ def parse_grace_periods(db: Session, target_user: User, admin: User, ws, overwri
                     grace_start_date=grace_date,
                     grace_period_days=30,
                     current_debt=sber_amount,
+                    planned_repayment_amount=total_amount if total_amount else sber_amount,
                     status="active",
                     moderation_status=RecordStatus.APPROVED,
                     approved_by_id=admin.id,
@@ -453,6 +460,14 @@ def import_full_xlsx(
 ) -> Dict[str, Any]:
     """
     Полный импорт всех листов из Excel файла.
+    Импортирует:
+    - Sheet1: история долгов по кредиторам с расчётом изменений (разница между датами)
+    - льготные периоды: кредитные карты с суммами к погашению на даты
+    - траты: обязательные расходы с категориями и датами
+    - доход: доходы с категориями и датами
+    
+    Листы 'сезоны', 'годы', 'Суммы для трат' используются для валидации расчётов
+    и не импортируются напрямую (расчёты производятся на основе импортированных данных).
     """
     import_file = Path(file_path)
     if not import_file.is_absolute():

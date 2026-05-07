@@ -117,6 +117,7 @@ class CreditCardBase(BaseModel):
     grace_start_date: date
     grace_period_days: int = Field(gt=0, le=120)
     current_debt: float = Field(ge=0)
+    planned_repayment_amount: float | None = None
     comment: str | None = Field(default=None, max_length=500)
 
 

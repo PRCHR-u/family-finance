@@ -176,6 +176,7 @@ class CreditCard(Base):
     grace_start_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
     grace_period_days: Mapped[int] = mapped_column(Integer, nullable=False)
     current_debt: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    planned_repayment_amount: Mapped[float | None] = mapped_column(Float, nullable=True)
     status: Mapped[CreditCardStatus] = mapped_column(
         SqlEnum(CreditCardStatus), nullable=False, default=CreditCardStatus.ACTIVE
     )
