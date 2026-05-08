@@ -5,10 +5,18 @@ __pycache__/
 *.pyo
 *.pyd
 
+# Database
+family_finance.db
+
+# Environment
+.env
+.env.local
+*.env.*
+
+# Logs
+*.log
+
 # Dependencies
 .venv/
 venv/
-env/
-.env
-.env.*
 ```
