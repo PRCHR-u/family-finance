@@ -117,6 +117,7 @@ class CreditCardBase(BaseModel):
     grace_start_date: date
     grace_period_days: int = Field(gt=0, le=120)
     current_debt: float = Field(ge=0)
+    planned_repayment_amount: float | None = None
     comment: str | None = Field(default=None, max_length=500)
 
 
@@ -344,6 +345,95 @@ class CreditCardIssuerRead(CreditCardIssuerBase):
     id: int
     created_at: datetime
     updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+# ==================== SEASON/YEAR/WEEKLY SCHEMAS ====================
+
+class SeasonSummaryBase(BaseModel):
+    year: int
+    season: str
+    opening_debt: float = 0.0
+    closing_debt: float = 0.0
+    debt_change: float = 0.0
+    comment: str | None = None
+
+
+class SeasonSummaryCreate(SeasonSummaryBase):
+    user_id: int
+
+
+class SeasonSummaryRead(SeasonSummaryBase):
+    id: int
+    user_id: int
+    calculated_opening_debt: float | None = None
+    calculated_closing_debt: float | None = None
+    calculated_debt_change: float | None = None
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class YearSummaryBase(BaseModel):
+    year: int
+    opening_debt: float = 0.0
+    closing_debt: float = 0.0
+    debt_change: float = 0.0
+    comment: str | None = None
+
+
+class YearSummaryCreate(YearSummaryBase):
+    user_id: int
+
+
+class YearSummaryRead(YearSummaryBase):
+    id: int
+    user_id: int
+    calculated_opening_debt: float | None = None
+    calculated_closing_debt: float | None = None
+    calculated_debt_change: float | None = None
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class WeeklyBudgetPlanBase(BaseModel):
+    month: int
+    year: int
+    week_number: int
+    planned_amount: float = 0.0
+    comment: str | None = None
+
+
+class WeeklyBudgetPlanCreate(WeeklyBudgetPlanBase):
+    user_id: int
+
+
+class WeeklyBudgetPlanRead(WeeklyBudgetPlanBase):
+    id: int
+    user_id: int
+    actual_amount: float | None = None
+    deviation: float | None = None
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class DebtHistoryRead(BaseModel):
+    id: int
+    creditor: str
+    amount: float
+    record_date: date
+    debt_change: float | None = None
+    created_at: datetime
 
     class Config:
         from_attributes = True
