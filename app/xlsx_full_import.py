@@ -84,7 +84,7 @@ def parse_sheet1_debts(db: Session, target_user: User, admin: User, ws, overwrit
     # Известные названия кредиторов из файла (нормализованные)
     KNOWN_CREDITORS = {
         "СБЕР", "Т-БАНК", "ОЛЯ т-банк", "Оля СБЕР", "АЛЬФА", "МТС", "КРЕДИТ",
-        "копилка", "ОЛЯ", "МТС1", "МТС2"
+        "копилка", "ОЛЯ", "МТС1", "МТС2", "копилка Оли"
     }
     
     # Ключевые слова, которые НЕ являются кредиторами
@@ -93,47 +93,49 @@ def parse_sheet1_debts(db: Session, target_user: User, admin: User, ws, overwrit
         "МЕСЯЦ", "ВЕСНУ", "ЗИМУ", "ЛЕТО", "ОСЕНЬ", "ГОД", "2024", "2025", "2026"
     }
     
-    creditor_columns = {}
+    # Находим все строки с датами и строки-заголовки
     date_rows = []  # Список кортежей (row_index, date, row_data)
+    header_rows = {}  # Маппинг: индекс строки с датой -> маппинг колонок
     
-    # Сначала находим все строки с датами
     for idx, row in enumerate(rows):
         if len(row) > 0:
             row_date = _coerce_date(row[0])
+            first_val = row[1] if len(row) > 1 else None
+            
             if row_date:
                 date_rows.append((idx, row_date, row))
-    
-    # Определяем колонки кредиторов из первой строки с датой
-    # Обычно вторая строка после даты содержит названия
-    if date_rows:
-        for idx, row_date, row in date_rows[:3]:  # Проверяем первые несколько строк
-            for col_idx in range(1, min(len(row), 15)):
-                cell_value = row[col_idx] if len(row) > col_idx else None
-                if isinstance(cell_value, str):
-                    cell_stripped = cell_value.strip()
-                    cell_upper = cell_stripped.upper()
-                    
-                    # Пропускаем служебные слова
-                    if any(kw in cell_upper for kw in SKIP_KEYWORDS):
-                        continue
-                    if len(cell_stripped) < 2:
-                        continue
-                    
-                    # Проверяем, похоже ли на название кредитора
-                    is_creditor = False
-                    for known in KNOWN_CREDITORS:
-                        if known.upper() in cell_upper or cell_upper in known.upper():
-                            is_creditor = True
-                            break
-                    
-                    # Если не нашли в известных, но строка короткая и не содержит пробелов - возможно это кредитор
-                    if not is_creditor and " " not in cell_stripped and len(cell_stripped) <= 15:
-                        # Дополнительная проверка: не содержит ли слов-маркеров
-                        if not any(kw in cell_upper for kw in ["ИЗМЕНЕНИЕ", "ВСЕГО", "РАЗНИЦА"]):
-                            is_creditor = True
-                    
-                    if is_creditor and cell_stripped not in creditor_columns:
-                        creditor_columns[cell_stripped] = col_idx
+            elif isinstance(first_val, str) and first_val.strip():
+                # Это строка-заголовок, сохраняем маппинг колонок
+                creditor_map = {}
+                for col_idx in range(1, min(len(row), 15)):
+                    cell_value = row[col_idx] if len(row) > col_idx else None
+                    if isinstance(cell_value, str):
+                        cell_stripped = cell_value.strip()
+                        cell_upper = cell_stripped.upper()
+                        
+                        # Пропускаем служебные слова
+                        if any(kw in cell_upper for kw in SKIP_KEYWORDS):
+                            continue
+                        if len(cell_stripped) < 2:
+                            continue
+                        
+                        # Проверяем, похоже ли на название кредитора
+                        is_creditor = False
+                        for known in KNOWN_CREDITORS:
+                            if known.upper() in cell_upper or cell_upper in known.upper():
+                                is_creditor = True
+                                break
+                        
+                        if is_creditor:
+                            creditor_map[cell_stripped] = col_idx
+                
+                # Сохраняем этот маппинг для следующих строк с датами
+                # пока не встретим новый заголовок
+                for future_idx in range(idx + 1, len(rows)):
+                    if future_idx not in header_rows:
+                        header_rows[future_idx] = creditor_map
+                    else:
+                        break
     
     inserted = 0
     updated = 0
@@ -145,13 +147,16 @@ def parse_sheet1_debts(db: Session, target_user: User, admin: User, ws, overwrit
     
     # Обрабатываем каждую строку с датой
     for idx, row_date, row in date_rows:
-        # Пропускаем строки-заголовки внутри данных
-        first_value = row[1] if len(row) > 1 else None
-        if isinstance(first_value, str):
-            first_upper = first_value.upper()
-            if any(kw in first_upper for kw in ["ВСЕГО", "СБЕР", "Т-БАНК", "ОЛЯ"]):
-                # Это может быть строка-заголовок с названиями колонок
-                continue
+        # Получаем маппинг колонок для этой строки
+        creditor_columns = header_rows.get(idx, {})
+        
+        # Если не нашли маппинг, пробуем определить по стандартным позициям
+        if not creditor_columns:
+            # Ищем ближайший заголовок выше
+            for search_idx in range(idx - 1, -1, -1):
+                if search_idx in header_rows:
+                    creditor_columns = header_rows[search_idx]
+                    break
         
         # Собираем долги по кредиторам на эту дату
         creditors_debts = {}
@@ -159,7 +164,8 @@ def parse_sheet1_debts(db: Session, target_user: User, admin: User, ws, overwrit
         
         for creditor_name, col_idx in creditor_columns.items():
             balance = _coerce_float(row[col_idx] if len(row) > col_idx else None)
-            if balance is not None and balance > 0:
+            if balance is not None:
+                # Копилки имеют отрицательное значение и уменьшают общий долг
                 creditors_debts[creditor_name] = balance
                 total_debt += balance
         
@@ -174,7 +180,8 @@ def parse_sheet1_debts(db: Session, target_user: User, admin: User, ws, overwrit
             }
             for creditor_name, col_idx in standard_cols.items():
                 balance = _coerce_float(row[col_idx] if len(row) > col_idx else None)
-                if balance is not None and balance > 0:
+                if balance is not None:
+                    # Копилки имеют отрицательное значение и уменьшают общий долг
                     creditors_debts[creditor_name] = balance
                     total_debt += balance
         

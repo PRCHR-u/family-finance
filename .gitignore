@@ -1,22 +1,50 @@
-```
+```python
+# Database files
+*.db
+
 # Python
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
-
-# Database
-family_finance.db
-
-# Environment
-.env
-.env.local
-*.env.*
-
-# Logs
-*.log
-
-# Dependencies
-.venv/
+.Python
+env/
 venv/
+.venv/
+.ENV
+.ENV.*
+.env
+.env.*
+requirements.txt.bak
+pip-log.txt
+pip-delete-this-directory.txt
+.tox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.log
+.git/modules/
+.pytest_cache/
+.hypothesis/
+
+# Excel files
+*.xlsx
+*.xls
+*.csv
+
+# Local config
+config.json
+*.local
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
 ```
