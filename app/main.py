@@ -53,6 +53,7 @@ from .schemas import (
     DailyBudgetResponse,
     DebtChangeAnalysis,
     DebtCreate,
+    DebtUpdate,
     DebtHistoryRead,
     DebtRead,
     DebtRepaymentCreate,
@@ -81,7 +82,10 @@ app = FastAPI(title="Family Finance API")
 # CORS middleware configuration
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=[
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -533,6 +537,84 @@ def reject_debt(debt_id: int, db: Session = Depends(get_db), admin: User = Depen
     db.commit()
     db.refresh(debt)
     return debt
+
+
+@app.patch("/debts/{debt_id}", response_model=DebtRead)
+def update_debt(
+    debt_id: int,
+    payload: DebtUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    debt = db.scalar(select(Debt).where(Debt.id == debt_id))
+    if not debt:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Долг не найден.")
+    if current_user.role != UserRole.ADMIN and debt.user_id != current_user.id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Нельзя менять чужой долг.")
+
+    updates = payload.model_dump(exclude_unset=True)
+    if not updates:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Нет данных для обновления.")
+
+    principal_changed = "principal_amount" in updates
+    for key, value in updates.items():
+        setattr(debt, key, value)
+
+    if principal_changed:
+        _recalculate_debt_balance(db, debt)
+
+    if current_user.role == UserRole.ADMIN:
+        debt.moderation_status = RecordStatus.APPROVED
+        debt.approved_by_id = current_user.id
+        debt.approved_at = datetime.utcnow()
+    else:
+        debt.moderation_status = RecordStatus.PENDING
+        debt.approved_by_id = None
+        debt.approved_at = None
+
+    _log_action(
+        db,
+        "debts.update",
+        actor_user_id=current_user.id,
+        target_user_id=debt.user_id,
+        details=f"debt_id={debt.id}, fields={','.join(updates.keys())}",
+    )
+    db.commit()
+    db.refresh(debt)
+    return debt
+
+
+@app.delete("/debts/{debt_id}")
+def delete_debt(
+    debt_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    debt = db.scalar(select(Debt).where(Debt.id == debt_id))
+    if not debt:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Долг не найден.")
+    if current_user.role != UserRole.ADMIN and debt.user_id != current_user.id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Нельзя удалять чужой долг.")
+
+    has_repayments = db.scalar(
+        select(DebtRepayment.id).where(DebtRepayment.debt_id == debt_id).limit(1)
+    )
+    if has_repayments:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Нельзя удалить долг с платежами. Удалите платежи сначала.",
+        )
+
+    _log_action(
+        db,
+        "debts.delete",
+        actor_user_id=current_user.id,
+        target_user_id=debt.user_id,
+        details=f"debt_id={debt.id}, creditor={debt.creditor_name}",
+    )
+    db.delete(debt)
+    db.commit()
+    return {"message": "Долг удален."}
 
 
 @app.post("/debts/{debt_id}/repayments", response_model=DebtRepaymentRead, status_code=status.HTTP_201_CREATED)
@@ -1692,45 +1774,6 @@ def export_audit_logs_csv(
     )
 
 
-app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
-
-
-@app.get("/")
-def root():
-    from fastapi.responses import FileResponse
-    return FileResponse(STATIC_DIR / "index.html")
-
-
-@app.get("/assets/{path:path}")
-def serve_assets(path: str):
-    """Serve frontend assets (JS, CSS) from static directory."""
-    from fastapi.responses import FileResponse
-    file_path = STATIC_DIR / "assets" / path
-    if file_path.exists():
-        return FileResponse(file_path)
-    raise HTTPException(status_code=404, detail="Asset not found")
-
-
-@app.get("/{path:path}")
-def serve_static_files(path: str):
-    """Serve static files (favicon, icons, etc.) from static directory."""
-    from fastapi.responses import FileResponse
-    file_path = STATIC_DIR / path
-    if file_path.exists() and file_path.is_file():
-        return FileResponse(file_path)
-    raise HTTPException(status_code=404, detail="File not found")
-
-
-@app.get("/assets/{path:path}")
-def serve_assets(path: str):
-    """Serve frontend assets (JS, CSS) from static directory."""
-    from fastapi.responses import FileResponse
-    file_path = STATIC_DIR / "assets" / path
-    if file_path.exists():
-        return FileResponse(file_path)
-    raise HTTPException(status_code=404, detail="Asset not found")
-
-
 # ==================== DICTIONARY ENDPOINTS (CREDITORS) ====================
 
 @app.post("/creditors", response_model=CreditorRead, status_code=status.HTTP_201_CREATED)
@@ -2650,3 +2693,32 @@ async def import_xlsx_to_database(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Ошибка при импорте: {str(e)}"
         )
+
+
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+
+@app.get("/")
+def root():
+    from fastapi.responses import FileResponse
+    return FileResponse(STATIC_DIR / "index.html")
+
+
+@app.get("/assets/{path:path}")
+def serve_assets(path: str):
+    """Serve frontend assets (JS, CSS) from static directory."""
+    from fastapi.responses import FileResponse
+    file_path = STATIC_DIR / "assets" / path
+    if file_path.exists():
+        return FileResponse(file_path)
+    raise HTTPException(status_code=404, detail="Asset not found")
+
+
+@app.get("/{path:path}")
+def serve_static_files(path: str):
+    """Serve static files (favicon, icons, etc.) from static directory."""
+    from fastapi.responses import FileResponse
+    file_path = STATIC_DIR / path
+    if file_path.exists() and file_path.is_file():
+        return FileResponse(file_path)
+    raise HTTPException(status_code=404, detail="File not found")

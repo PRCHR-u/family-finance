@@ -77,6 +77,15 @@ class DebtCreate(DebtBase):
     pass
 
 
+class DebtUpdate(BaseModel):
+    creditor_name: str | None = Field(default=None, min_length=2, max_length=120)
+    principal_amount: float | None = None
+    start_date: date | None = None
+    planned_payoff_date: date | None = None
+    interest_rate: float | None = None
+    comment: str | None = Field(default=None, max_length=500)
+
+
 class DebtRead(DebtBase):
     id: int
     user_id: int

@@ -1,9 +1,8 @@
-import { useState, useEffect } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { debtService, analyticsService } from '../api/services';
+import { useMemo, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { debtService, analyticsService, debtHistoryService } from '../api/services';
 
 export default function DashboardPage() {
-  const queryClient = useQueryClient();
   const [period, setPeriod] = useState('month');
 
   const { data: debts, isLoading: debtsLoading } = useQuery({
@@ -16,8 +15,47 @@ export default function DashboardPage() {
     queryFn: () => analyticsService.getDebtAnalytics({ period }),
   });
 
-  const totalDebt = debts?.reduce((sum, debt) => sum + (debt.amount || 0), 0) || 0;
-  const pendingCount = debts?.filter(d => !d.is_approved).length || 0;
+  const { data: debtHistory, isLoading: debtHistoryLoading } = useQuery({
+    queryKey: ['debt-history'],
+    queryFn: () => debtHistoryService.getAll(),
+  });
+
+  const totalDebt = useMemo(
+    () => debtHistory?.reduce((sum, item) => sum + (item.current_amount || 0), 0) || 0,
+    [debtHistory]
+  );
+
+  const pendingCount = debts?.filter(d => d.moderation_status === 'pending').length || 0;
+
+  const creditorsCount = debtHistory?.length || 0;
+
+  const byCreditor = useMemo(() => {
+    if (!debtHistory || debtHistory.length === 0 || totalDebt <= 0) return [];
+
+    return debtHistory
+      .map((item) => ({
+        creditor: item.creditor,
+        amount: item.current_amount || 0,
+        percentage: totalDebt > 0 ? ((item.current_amount || 0) / totalDebt) * 100 : 0,
+      }))
+      .sort((a, b) => b.amount - a.amount);
+  }, [debtHistory, totalDebt]);
+
+  const recentDebtRows = useMemo(() => {
+    if (!debtHistory || debtHistory.length === 0) return [];
+
+    return debtHistory
+      .flatMap((item) =>
+        (item.history || []).map((h) => ({
+          id: h.id,
+          date: h.record_date,
+          creditor: item.creditor,
+          amount: h.amount || 0,
+        }))
+      )
+      .sort((a, b) => new Date(b.date) - new Date(a.date))
+      .slice(0, 5);
+  }, [debtHistory]);
 
   return (
     <div className="space-y-6">
@@ -47,7 +85,7 @@ export default function DashboardPage() {
           <div className="px-4 py-5 sm:p-6">
             <dt className="text-sm font-medium text-gray-500 truncate">Кредиторов</dt>
             <dd className="mt-1 text-3xl font-semibold text-indigo-600">
-              {new Set(debts?.map(d => d.creditor)).size || 0}
+              {creditorsCount}
             </dd>
           </div>
         </div>
@@ -78,7 +116,7 @@ export default function DashboardPage() {
             </select>
           </div>
 
-          {analyticsLoading ? (
+          {analyticsLoading || debtHistoryLoading ? (
             <div className="text-center py-8">Загрузка...</div>
           ) : analytics ? (
             <div className="space-y-4">
@@ -86,27 +124,27 @@ export default function DashboardPage() {
                 <div className="p-4 bg-gray-50 rounded-md">
                   <p className="text-sm text-gray-600">Начальный долг</p>
                   <p className="text-xl font-semibold text-gray-900">
-                    {analytics.start_debt?.toLocaleString('ru-RU') || 0} ₽
+                    {analytics.opening_debt?.toLocaleString('ru-RU') || 0} ₽
                   </p>
                 </div>
                 <div className="p-4 bg-gray-50 rounded-md">
                   <p className="text-sm text-gray-600">Конечный долг</p>
                   <p className="text-xl font-semibold text-gray-900">
-                    {analytics.end_debt?.toLocaleString('ru-RU') || 0} ₽
+                    {totalDebt.toLocaleString('ru-RU')} ₽
                   </p>
                 </div>
                 <div className="p-4 bg-gray-50 rounded-md">
                   <p className="text-sm text-gray-600">Изменение</p>
                   <p className={`text-xl font-semibold ${
-                    (analytics.change || 0) >= 0 ? 'text-red-600' : 'text-green-600'
+                    (analytics.debt_change || 0) >= 0 ? 'text-red-600' : 'text-green-600'
                   }`}>
-                    {(analytics.change || 0) >= 0 ? '+' : ''}
-                    {analytics.change?.toLocaleString('ru-RU') || 0} ₽
+                    {(analytics.debt_change || 0) >= 0 ? '+' : ''}
+                    {analytics.debt_change?.toLocaleString('ru-RU') || 0} ₽
                   </p>
                 </div>
               </div>
 
-              {analytics.by_creditor && analytics.by_creditor.length > 0 && (
+              {byCreditor.length > 0 && (
                 <div>
                   <h3 className="text-md font-medium text-gray-900 mb-2">По кредиторам</h3>
                   <div className="overflow-x-auto">
@@ -125,7 +163,7 @@ export default function DashboardPage() {
                         </tr>
                       </thead>
                       <tbody className="bg-white divide-y divide-gray-200">
-                        {analytics.by_creditor.map((item, idx) => (
+                        {byCreditor.map((item, idx) => (
                           <tr key={idx}>
                             <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                               {item.creditor}
@@ -154,9 +192,9 @@ export default function DashboardPage() {
       <div className="bg-white shadow rounded-lg">
         <div className="px-4 py-5 sm:p-6">
           <h2 className="text-lg font-medium text-gray-900 mb-4">Последние записи долгов</h2>
-          {debtsLoading ? (
+          {debtHistoryLoading ? (
             <div className="text-center py-8">Загрузка...</div>
-          ) : debts && debts.length > 0 ? (
+          ) : recentDebtRows.length > 0 ? (
             <div className="overflow-x-auto">
               <table className="min-w-full divide-y divide-gray-200">
                 <thead className="bg-gray-50">
@@ -176,7 +214,7 @@ export default function DashboardPage() {
                   </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
-                  {debts.slice(0, 5).map((debt) => (
+                  {recentDebtRows.map((debt) => (
                     <tr key={debt.id}>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                         {new Date(debt.date).toLocaleDateString('ru-RU')}
@@ -188,12 +226,8 @@ export default function DashboardPage() {
                         {debt.amount?.toLocaleString('ru-RU')} ₽
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-center">
-                        <span className={`px-2 py-1 text-xs rounded-full ${
-                          debt.is_approved
-                            ? 'bg-green-100 text-green-800'
-                            : 'bg-yellow-100 text-yellow-800'
-                        }`}>
-                          {debt.is_approved ? 'Подтверждено' : 'На модерации'}
+                        <span className="px-2 py-1 text-xs rounded-full bg-green-100 text-green-800">
+                          Импортировано
                         </span>
                       </td>
                     </tr>

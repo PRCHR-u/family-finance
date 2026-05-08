@@ -203,6 +203,11 @@ export const analyticsService = {
     return response.data;
   },
 
+  getWeeklyBudget: async (params = {}) => {
+    const response = await api.get('/analytics/weekly-budget', { params });
+    return response.data;
+  },
+
   getBudgetAnalytics: async (params = {}) => {
     const response = await api.get('/analytics/budget', { params });
     return response.data;
