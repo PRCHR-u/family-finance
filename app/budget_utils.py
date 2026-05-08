@@ -7,7 +7,7 @@ from typing import Optional
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from .models import Debt, DebtRepayment, Expense, FinanceRecord, Income, RecordStatus, User, UserRole, DebtHistory
+from .models import Debt, DebtRepayment, Expense, FinanceRecord, Income, RecordStatus, User, UserRole, DebtHistory, SeasonSummary, YearSummary, WeeklyBudgetPlan
 
 
 def get_debt_change_analysis(
@@ -157,6 +157,8 @@ def get_seasonal_debt_summary(
     - Весна: март, апрель, май
     - Лето: июнь, июль, август
     - Осень: сентябрь, октябрь, ноябрь
+    
+    Также проверяет импортированные данные из SeasonSummary для валидации.
     """
     from sqlalchemy import func
     
@@ -195,6 +197,15 @@ def get_seasonal_debt_summary(
             opening_debt = 0
             seasonal_change = 0
         
+        # Проверяем импортированные данные для валидации
+        imported_season = db.scalar(
+            select(SeasonSummary).where(
+                SeasonSummary.user_id == current_user.id if current_user.role != UserRole.ADMIN else True,
+                SeasonSummary.year == year,
+                SeasonSummary.season == season,
+            )
+        )
+        
         season_name_ru = {
             "winter": "зима",
             "spring": "весна",
@@ -202,7 +213,7 @@ def get_seasonal_debt_summary(
             "autumn": "осень",
         }[season]
         
-        result[season] = {
+        season_data = {
             "name": season_name_ru,
             "start_date": start,
             "end_date": end,
@@ -210,6 +221,13 @@ def get_seasonal_debt_summary(
             "closing_debt": closing_debt,
             "debt_change": seasonal_change,
         }
+        
+        # Добавляем импортированные значения если есть
+        if imported_season:
+            season_data["imported_debt_change"] = imported_season.debt_change
+            season_data["validation_match"] = abs(seasonal_change - imported_season.debt_change) < 0.01
+        
+        result[season] = season_data
     
     return result
 
@@ -222,6 +240,8 @@ def get_yearly_debt_summary(
     """
     Вычисляет агрегированные показатели долга за год.
     Аналогично листу 'годы' в Excel файле.
+    
+    Также проверяет импортированные данные из YearSummary для валидации.
     """
     start = date(year, 1, 1)
     end = date(year, 12, 31)
@@ -237,12 +257,27 @@ def get_yearly_debt_summary(
         closing_debt = 0
         yearly_change = 0
     
-    return {
+    # Проверяем импортированные данные для валидации
+    imported_year = db.scalar(
+        select(YearSummary).where(
+            YearSummary.user_id == current_user.id if current_user.role != UserRole.ADMIN else True,
+            YearSummary.year == year,
+        )
+    )
+    
+    result = {
         "year": year,
         "opening_debt": opening_debt,
         "closing_debt": closing_debt,
         "debt_change": yearly_change,
     }
+    
+    # Добавляем импортированные значения если есть
+    if imported_year:
+        result["imported_debt_change"] = imported_year.debt_change
+        result["validation_match"] = abs(yearly_change - imported_year.debt_change) < 0.01
+    
+    return result
 
 
 def _debt_total_as_of(db: Session, current_user: User, as_of: date) -> float:
@@ -284,6 +319,7 @@ def calculate_weekly_budget(
     - Обязательные расходы (mandatory expenses)
     - Запланированные траты из finance records
     - Доходы за период
+    - Плановые суммы по неделям из WeeklyBudgetPlan (если импортированы)
     
     Параметры:
     - reference_date: дата, с которой начинается расчет (по умолчанию сегодня)
@@ -295,6 +331,7 @@ def calculate_weekly_budget(
     - mandatory_expenses: обязательные расходы
     - planned_expenses: запланированные расходы
     - available_income: доступный доход
+    - weekly_plans: плановые суммы по неделям из импорта
     - recommendation: рекомендация по бюджету
     """
     from calendar import monthrange
@@ -344,8 +381,32 @@ def calculate_weekly_budget(
     if finance_records:
         avg_planned_expense = sum(r.planned_expense for r in finance_records) / len(finance_records)
     
-    # Общий бюджет на неделю
-    weekly_budget = total_mandatory + avg_planned_expense
+    # Получаем плановые суммы по неделям из WeeklyBudgetPlan
+    weekly_plans_stmt = select(WeeklyBudgetPlan).where(
+        WeeklyBudgetPlan.user_id == current_user.id if current_user.role != UserRole.ADMIN else True,
+        WeeklyBudgetPlan.year == reference_date.year,
+        WeeklyBudgetPlan.month == reference_date.month,
+        WeeklyBudgetPlan.week_number >= ((reference_date.day - 1) // 7) + 1,
+    ).order_by(WeeklyBudgetPlan.week_number)
+    
+    weekly_plans = db.scalars(weekly_plans_stmt).all()
+    weekly_plan_data = [
+        {
+            "week_number": plan.week_number,
+            "planned_amount": plan.planned_amount,
+            "actual_amount": plan.actual_amount,
+            "deviation": plan.deviation,
+            "comment": plan.comment,
+        }
+        for plan in weekly_plans
+    ]
+    
+    # Общий бюджет на неделю (используем план если есть, иначе расчёт)
+    if weekly_plans:
+        # Берём среднее из плановых сумм для недель в периоде
+        weekly_budget = sum(plan.planned_amount for plan in weekly_plans) / len(weekly_plans)
+    else:
+        weekly_budget = total_mandatory + avg_planned_expense
     
     # Дневной бюджет
     daily_budget = weekly_budget / (7 * weeks_ahead)
@@ -398,6 +459,7 @@ def calculate_weekly_budget(
                 for i in incomes
             ],
         },
+        "weekly_plans": weekly_plan_data,
         "available_income": available_income,
         "balance": available_income - weekly_budget,
         "recommendation": recommendation,

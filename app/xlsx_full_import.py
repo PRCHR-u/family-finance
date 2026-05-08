@@ -747,6 +747,27 @@ def import_full_xlsx(
         results["sheets_processed"].append("доход")
         results["details"]["incomes"] = income_result
     
+    # 5. сезоны
+    if "сезоны" in wb.sheetnames:
+        ws = wb["сезоны"]
+        season_result = parse_seasons(db, target_user, admin, ws, overwrite)
+        results["sheets_processed"].append("сезоны")
+        results["details"]["seasons"] = season_result
+    
+    # 6. годы
+    if "годы" in wb.sheetnames:
+        ws = wb["годы"]
+        year_result = parse_years(db, target_user, admin, ws, overwrite)
+        results["sheets_processed"].append("годы")
+        results["details"]["years"] = year_result
+    
+    # 7. Суммы для трат
+    if "Суммы для трат" in wb.sheetnames:
+        ws = wb["Суммы для трат"]
+        weekly_result = parse_weekly_budgets(db, target_user, admin, ws, overwrite)
+        results["sheets_processed"].append("Суммы для трат")
+        results["details"]["weekly_budgets"] = weekly_result
+    
     # Коммитим все изменения
     db.commit()
     
