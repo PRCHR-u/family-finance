@@ -330,6 +330,12 @@ def parse_expenses(db: Session, target_user: User, admin: User, ws, overwrite: b
     """
     Парсит лист 'траты'.
     Создаёт записи Expense с категориями и датами.
+    
+    Формат данных в файле:
+    - Строка 0: заголовок ('ОБЯЗАТЕЛЬНЫЕ ТРАТЫ', 'СКОЛЬКО', 'ДАТА', 'ВСЕГО')
+    - Далее идут группы строк по месяцам
+    - В колонке D может быть название месяца (например, 'Май', 'Июнь')
+    - В колонке C может быть дата или 'неизвестно'
     """
     rows = list(ws.iter_rows(values_only=True))
     
@@ -338,6 +344,7 @@ def parse_expenses(db: Session, target_user: User, admin: User, ws, overwrite: b
     skipped = 0
     
     current_month = None
+    seen_expenses = set()  # Для предотвращения дубликатов (description, amount, due_date)
     
     for row in rows:
         if _is_empty_row(row, max_cols=4):
@@ -360,33 +367,41 @@ def parse_expenses(db: Session, target_user: User, admin: User, ws, overwrite: b
         if isinstance(description, str) and "ОБЯЗАТЕЛЬНЫЕ" in description.upper():
             continue
         
+        # Пропускаем итоговые строки
+        if isinstance(description, str) and "ВСЕГО" in str(description).upper():
+            continue
+        
         # Парсим дату
         due_date = _coerce_date(due_date_val)
-        if not due_date and current_month:
-            # Если даты нет, но есть месяц, создаём запись без конкретной даты
-            pass
         
         # Определяем категорию
         category = None
         if description:
-            desc_lower = str(description).lower()
+            desc_lower = str(description).lower().strip()
             if "аренд" in desc_lower:
                 category = ExpenseCategory.RENT
             elif "коммунал" in desc_lower:
                 category = ExpenseCategory.UTILITIES
             elif "врач" in desc_lower or "медиц" in desc_lower:
                 category = ExpenseCategory.MEDICAL
-            elif "год" in desc_lower or "др" in desc_lower or "празд" in desc_lower:
+            elif "год" in desc_lower or "др " in desc_lower or "др." in desc_lower or "празд" in desc_lower:
                 category = ExpenseCategory.GIFTS
             elif "toefl" in desc_lower or "учеб" in desc_lower or "образован" in desc_lower:
                 category = ExpenseCategory.EDUCATION
+        
+        # Проверяем на дубликаты
+        expense_key = (str(description).strip().lower() if description else "", amount, due_date.isoformat() if due_date else None)
+        if expense_key in seen_expenses:
+            skipped += 1
+            continue
+        seen_expenses.add(expense_key)
         
         expense = Expense(
             user_id=target_user.id,
             amount=amount,
             due_date=due_date if due_date else date.today(),
             category=category,
-            description=str(description) if description else None,
+            description=str(description).strip() if description else None,
             is_mandatory=True,
             is_completed=False,
             moderation_status=RecordStatus.APPROVED,
@@ -403,12 +418,19 @@ def parse_incomes(db: Session, target_user: User, admin: User, ws, overwrite: bo
     """
     Парсит лист 'доход'.
     Создаёт записи Income с категориями и датами.
+    
+    Формат данных в файле:
+    - Строка 0: заголовок ('Доход', 'сколько', 'когда')
+    - Далее идут строки с доходами
+    - В колонке C может быть дата или 'до ДД.ММ'
     """
     rows = list(ws.iter_rows(values_only=True))
     
     inserted = 0
     updated = 0
     skipped = 0
+    
+    seen_incomes = set()  # Для предотвращения дубликатов (description, amount, income_date)
     
     for row in rows:
         if _is_empty_row(row, max_cols=3):
@@ -435,7 +457,7 @@ def parse_incomes(db: Session, target_user: User, admin: User, ws, overwrite: bo
         # Определяем категорию
         category = None
         if description:
-            desc_lower = str(description).lower()
+            desc_lower = str(description).lower().strip()
             if "зп" in desc_lower or "зарплат" in desc_lower:
                 category = IncomeCategory.SALARY
             elif "аванс" in desc_lower:
@@ -449,12 +471,19 @@ def parse_incomes(db: Session, target_user: User, admin: User, ws, overwrite: bo
             elif "склад" in desc_lower:
                 category = IncomeCategory.FREELANCE
         
+        # Проверяем на дубликаты
+        income_key = (str(description).strip().lower() if description else "", amount, income_date.isoformat())
+        if income_key in seen_incomes:
+            skipped += 1
+            continue
+        seen_incomes.add(income_key)
+        
         income = Income(
             user_id=target_user.id,
             amount=amount,
             income_date=income_date,
             category=category,
-            description=str(description) if description else None,
+            description=str(description).strip() if description else None,
             is_actual=False,
             moderation_status=RecordStatus.APPROVED,
             approved_by_id=admin.id,
@@ -608,6 +637,12 @@ def parse_weekly_budgets(db: Session, target_user: User, admin: User, ws, overwr
     """
     Парсит лист 'Суммы для трат'.
     Сохраняет плановые суммы для трат по неделям.
+    
+    Формат данных в файле:
+    - Строка 0: название месяца (например, "МАЙ")
+    - Строка 1: общая сумма на месяц и возможно разбивка по неделям
+    - Строка 3: диапазоны дат для недель (например, "01.05-10.05", "11.05-17.05", ...)
+    - Строки 4+: суммы для каждой недели в первой колонке, даты могут быть в той же строке
     """
     rows = list(ws.iter_rows(values_only=True))
     
@@ -622,61 +657,112 @@ def parse_weekly_budgets(db: Session, target_user: User, admin: User, ws, overwr
         "ИЮЛЬ": 7, "АВГУСТ": 8, "СЕНТЯБРЬ": 9, "ОКТЯБРЬ": 10, "НОЯБРЬ": 11, "ДЕКАБРЬ": 12,
     }
     
-    week_number = 1
+    # Собираем данные о неделях для текущего месяца
+    week_data = []  # Список кортежей (week_number, date_range, amount)
     
-    for row in rows:
+    for row_idx, row in enumerate(rows):
         if _is_empty_row(row, max_cols=4):
             continue
         
         first_cell = row[0] if len(row) > 0 else None
         
+        # Проверяем, является ли строка заголовком месяца
         if isinstance(first_cell, str):
             month_upper = first_cell.upper().strip()
             
-            if "-" in first_cell and "." in first_cell:
-                # Строка с диапазонами дат для недель
-                week_number = 1
-                for col_idx in range(min(len(row), 4)):
-                    date_range = row[col_idx]
-                    if not isinstance(date_range, str) or "-" not in date_range:
-                        continue
-                    
-                    amount = _coerce_float(row[col_idx + 4] if len(row) > col_idx + 4 else None)
-                    if amount is None:
-                        continue
-                    
-                    existing = db.scalar(
-                        select(WeeklyBudgetPlan).where(
-                            WeeklyBudgetPlan.user_id == target_user.id,
-                            WeeklyBudgetPlan.year == current_year,
-                            WeeklyBudgetPlan.month == current_month,
-                            WeeklyBudgetPlan.week_number == week_number,
+            if month_upper in month_mapping:
+                # Сохраняем предыдущие накопленные данные перед переключением месяца
+                if current_month is not None and week_data:
+                    for week_num, date_range, amount in week_data:
+                        existing = db.scalar(
+                            select(WeeklyBudgetPlan).where(
+                                WeeklyBudgetPlan.user_id == target_user.id,
+                                WeeklyBudgetPlan.year == current_year,
+                                WeeklyBudgetPlan.month == current_month,
+                                WeeklyBudgetPlan.week_number == week_num,
+                            )
                         )
-                    )
-                    
-                    if existing:
-                        if overwrite:
-                            existing.planned_amount = amount
-                            existing.comment = f"Неделя: {date_range}"
-                            updated += 1
+                        
+                        if existing:
+                            if overwrite:
+                                existing.planned_amount = amount
+                                existing.comment = f"Неделя: {date_range}" if date_range else None
+                                updated += 1
+                            else:
+                                skipped += 1
                         else:
-                            skipped += 1
-                    else:
-                        plan = WeeklyBudgetPlan(
-                            user_id=target_user.id,
-                            year=current_year,
-                            month=current_month if current_month else 1,
-                            week_number=week_number,
-                            planned_amount=amount,
-                            comment=f"Неделя: {date_range}",
-                        )
-                        db.add(plan)
-                        inserted += 1
-                    
-                    week_number += 1
-            elif month_upper in month_mapping:
+                            plan = WeeklyBudgetPlan(
+                                user_id=target_user.id,
+                                year=current_year,
+                                month=current_month,
+                                week_number=week_num,
+                                planned_amount=amount,
+                                comment=f"Неделя: {date_range}" if date_range else None,
+                            )
+                            db.add(plan)
+                            inserted += 1
+                
+                # Новый месяц
                 current_month = month_mapping[month_upper]
-                week_number = 1
+                week_data = []
+                continue
+            
+            # Проверяем, является ли строка диапазоном дат (например, "01.05-10.05")
+            if "-" in str(first_cell) and "." in str(first_cell):
+                # Это строка с диапазонами дат для недель
+                # Собираем все диапазоны из этой строки
+                date_ranges = []
+                for col_idx in range(min(len(row), 5)):
+                    cell_val = row[col_idx]
+                    if isinstance(cell_val, str) and "-" in cell_val and "." in cell_val:
+                        date_ranges.append(cell_val)
+                
+                # Теперь пытаемся найти соответствующие суммы
+                # Суммы могут быть в следующих строках или в соседних колонках
+                continue
+        
+        # Если первая ячейка содержит число - это сумма для недели
+        amount = _coerce_float(first_cell)
+        if amount is not None and current_month is not None:
+            # Пытаемся найти диапазон дат для этой недели
+            date_range = None
+            # Проверяем, есть ли в этой же строке диапазон дат
+            if len(row) > 0 and isinstance(row[0], str) and "-" in str(row[0]) and "." in str(row[0]):
+                date_range = row[0]
+            
+            week_num = len(week_data) + 1
+            week_data.append((week_num, date_range, amount))
+    
+    # Сохраняем данные для последнего месяца
+    if current_month is not None and week_data:
+        for week_num, date_range, amount in week_data:
+            existing = db.scalar(
+                select(WeeklyBudgetPlan).where(
+                    WeeklyBudgetPlan.user_id == target_user.id,
+                    WeeklyBudgetPlan.year == current_year,
+                    WeeklyBudgetPlan.month == current_month,
+                    WeeklyBudgetPlan.week_number == week_num,
+                )
+            )
+            
+            if existing:
+                if overwrite:
+                    existing.planned_amount = amount
+                    existing.comment = f"Неделя: {date_range}" if date_range else None
+                    updated += 1
+                else:
+                    skipped += 1
+            else:
+                plan = WeeklyBudgetPlan(
+                    user_id=target_user.id,
+                    year=current_year,
+                    month=current_month,
+                    week_number=week_num,
+                    planned_amount=amount,
+                    comment=f"Неделя: {date_range}" if date_range else None,
+                )
+                db.add(plan)
+                inserted += 1
     
     return {"inserted": inserted, "updated": updated, "skipped": skipped}
 
