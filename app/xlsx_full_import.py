@@ -93,6 +93,32 @@ def parse_sheet1_debts(db: Session, target_user: User, admin: User, ws, overwrit
         "МЕСЯЦ", "ВЕСНУ", "ЗИМУ", "ЛЕТО", "ОСЕНЬ", "ГОД", "2024", "2025", "2026"
     }
     
+    # Префиксы имён, которые нужно удалять из названий кредиторов
+    NAME_PREFIXES = ["ОЛЯ ", "Оля ", "оля ", "OLYA ", "Olya ", " Sasha ", "Саша ", "саша "]
+    
+    def normalize_creditor_name(name: str) -> str:
+        """Нормализует название кредитора, удаляя имена людей."""
+        normalized = name.strip()
+        for prefix in NAME_PREFIXES:
+            if normalized.startswith(prefix):
+                normalized = normalized[len(prefix):].strip()
+                break
+        # Приводим к стандартному формату
+        upper = normalized.upper()
+        if "Т-БАНК" in upper or "Т БАНК" in upper or "ТБ" in upper:
+            return "Т-БАНК"
+        elif "СБЕР" in upper:
+            return "СБЕР"
+        elif "АЛЬФА" in upper:
+            return "АЛЬФА"
+        elif "МТС" in upper:
+            return "МТС"
+        elif "КРЕДИТ" in upper:
+            return "КРЕДИТ"
+        elif "КОПИЛКА" in upper:
+            return "копилка"
+        return normalized
+    
     # Находим все строки с датами и строки-заголовки
     date_rows = []  # Список кортежей (row_index, date, row_data)
     header_rows = {}  # Маппинг: индекс строки с датой -> маппинг колонок
@@ -127,7 +153,9 @@ def parse_sheet1_debts(db: Session, target_user: User, admin: User, ws, overwrit
                                 break
                         
                         if is_creditor:
-                            creditor_map[cell_stripped] = col_idx
+                            # Нормализуем название кредитора
+                            normalized_name = normalize_creditor_name(cell_stripped)
+                            creditor_map[normalized_name] = col_idx
                 
                 # Сохраняем этот маппинг для следующих строк с датами
                 # пока не встретим новый заголовок
@@ -173,16 +201,18 @@ def parse_sheet1_debts(db: Session, target_user: User, admin: User, ws, overwrit
         if not creditors_debts:
             standard_cols = {
                 "СБЕР": 1,
-                "ОЛЯ т-банк": 2,
-                "Оля СБЕР": 3,
+                "Т-БАНК": 2,
+                "СБЕР": 3,
                 "Т-БАНК": 4,
                 "копилка": 5,
             }
             for creditor_name, col_idx in standard_cols.items():
                 balance = _coerce_float(row[col_idx] if len(row) > col_idx else None)
                 if balance is not None:
+                    # Нормализуем название кредитора
+                    normalized_name = normalize_creditor_name(creditor_name)
                     # Копилки имеют отрицательное значение и уменьшают общий долг
-                    creditors_debts[creditor_name] = balance
+                    creditors_debts[normalized_name] = balance
                     total_debt += balance
         
         if not creditors_debts:
