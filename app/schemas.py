@@ -254,8 +254,7 @@ class CreditorDebtHistory(BaseModel):
     creditor: str
     history: list[DebtHistoryRead]
     current_amount: float
-    min_amount: float
-    max_amount: float
+    change_from_previous: float  # Изменение по сравнению с предыдущим периодом
 
 
 # ==================== BUDGET ANALYSIS SCHEMAS ====================

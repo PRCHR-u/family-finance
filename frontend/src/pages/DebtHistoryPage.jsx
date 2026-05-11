@@ -51,15 +51,9 @@ export default function DebtHistoryPage() {
                   </span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-gray-600">Минимум:</span>
-                  <span className="font-medium text-green-600">
-                    {creditor.min_amount.toLocaleString('ru-RU')} ₽
-                  </span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-gray-600">Максимум:</span>
-                  <span className="font-medium text-red-600">
-                    {creditor.max_amount.toLocaleString('ru-RU')} ₽
+                  <span className="text-gray-600">Изменение:</span>
+                  <span className={`font-medium ${creditor.change_from_previous >= 0 ? 'text-red-600' : 'text-green-600'}`}>
+                    {creditor.change_from_previous >= 0 ? '+' : ''}{creditor.change_from_previous.toLocaleString('ru-RU')} ₽
                   </span>
                 </div>
                 <div className="flex justify-between">

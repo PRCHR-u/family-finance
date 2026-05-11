@@ -2071,13 +2071,23 @@ def get_debt_history(
     
     result = []
     for creditor_name, history_records in creditors_data.items():
-        amounts = [r.amount for r in history_records]
+        # Сортируем записи по дате для корректного сравнения
+        sorted_records = sorted(history_records, key=lambda r: r.record_date)
+        amounts = [r.amount for r in sorted_records]
+        
+        # Вычисляем изменение по сравнению с предыдущим периодом
+        if len(amounts) >= 2:
+            change_from_previous = amounts[-1] - amounts[-2]
+        elif len(amounts) == 1:
+            change_from_previous = amounts[0]  # Если только одна запись, считаем от нуля
+        else:
+            change_from_previous = 0.0
+        
         result.append(CreditorDebtHistory(
             creditor=creditor_name,
-            history=[DebtHistoryRead.model_validate(r) for r in history_records],
+            history=[DebtHistoryRead.model_validate(r) for r in sorted_records],
             current_amount=amounts[-1] if amounts else 0.0,
-            min_amount=min(amounts) if amounts else 0.0,
-            max_amount=max(amounts) if amounts else 0.0,
+            change_from_previous=change_from_previous,
         ))
     
     return result
@@ -2104,13 +2114,23 @@ def get_debt_history_by_creditor(
             detail=f"История по кредитору '{creditor_name}' не найдена"
         )
     
-    amounts = [r.amount for r in records]
+    # Сортируем записи по дате для корректного сравнения
+    sorted_records = sorted(records, key=lambda r: r.record_date)
+    amounts = [r.amount for r in sorted_records]
+    
+    # Вычисляем изменение по сравнению с предыдущим периодом
+    if len(amounts) >= 2:
+        change_from_previous = amounts[-1] - amounts[-2]
+    elif len(amounts) == 1:
+        change_from_previous = amounts[0]  # Если только одна запись, считаем от нуля
+    else:
+        change_from_previous = 0.0
+    
     return CreditorDebtHistory(
         creditor=creditor_name,
-        history=[DebtHistoryRead.model_validate(r) for r in records],
+        history=[DebtHistoryRead.model_validate(r) for r in sorted_records],
         current_amount=amounts[-1] if amounts else 0.0,
-        min_amount=min(amounts) if amounts else 0.0,
-        max_amount=max(amounts) if amounts else 0.0,
+        change_from_previous=change_from_previous,
     )
 
 
