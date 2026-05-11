@@ -358,48 +358,100 @@ class ExcelImporter:
         print(f"✅ Импортировано {expenses_created} расходов")
 
     def import_credit_cards_sheet(self, df: pd.DataFrame):
-        """Импортирует льготные периоды"""
+        """
+        Импортирует льготные периоды.
+        Структура: min (дата) | Т-банк | СБЕР | ... | TOTAL
+        Пример: 2026-05-17 | 78144.0 | NaN | 78144.00
+        """
         print(f"Импорт кредитных карт из {len(df)} строк...")
-        
-        # Ожидаем структуру: Карта | Лимит | Потрачено | Срок | Сумма к погашению
+
+        cards_created = 0 
         for idx, row in df.iterrows():
-            name = str(row.iloc[0]).strip() if len(row) > 0 else "Unknown"
-            if pd.isna(name) or name == "":
-                continue
+                        # Первая колонка - дата или название месяца
+            date_val_raw = row.iloc[0] if len(row) > 0 else None
+            date_val = self.normalize_date(date_val_raw)
+
+            # Если это месяц (МАЙ, ИЮНЬ и т.д.), пропускаем - это итоговая строка
+            if date_val is None and isinstance(date_val_raw, str):
+                month_str = str(date_val_raw).strip().upper()
+                if any(m in month_str for m in ['МАЙ', 'ИЮН', 'ИЮЛ', 'АВГ', 'СЕН', 'ОКТ', 'НОЯ', 'ДЕК', 'ЯНВ', 'ФЕВ', 'МАР', 'АПР']):
+                    continue
             
-            # Пытаемся найти сумму к погашению (последняя колонка обычно)
+            # Последняя колонка - TOTAL (сумма к погашению)
+            total_col_idx = len(row) - 1
             repayment = 0.0
-            if len(row) > 4:
-                try:
-                    val = row.iloc[-1] # Последняя колонка - TOTAL
+            try:
+                val = row.iloc[total_col_idx]
+                if not pd.isna(val):
                     repayment = float(str(val).replace(',', '.').replace(' ', ''))
-                except (ValueError, TypeError):
-                    pass
+            except (ValueError, TypeError):
+                pass
             
-            # Проверяем дубликат
-            existing = self.db.query(CreditCard).filter(CreditCard.card_name == name).first()
-            if existing:
-                if repayment > 0:
+            if repayment <= 0:
+                continue
+
+            # Проходим по всем колонкам между датой и TOTAL
+            for col_idx in range(1, total_col_idx):
+                card_name_raw = df.columns[col_idx] if col_idx < len(df.columns) else None
+                amount_val = row.iloc[col_idx]
+
+                if pd.isna(card_name_raw) or pd.isna(amount_val):
+                    continue
+
+                card_name = str(card_name_raw).strip()
+                if not card_name or card_name.lower() in ['min', 'total', 'unnamed']:
+                    continue
+
+                try:
+                    amount = float(str(amount_val).replace(',', '.').replace(' ', ''))
+                except (ValueError, TypeError):
+                    continue
+
+                if amount <= 0:
+                    continue
+
+                # Нормализуем имя карты (верхний регистр для консистентности)
+                norm_name = card_name.upper()
+
+                # Проверяем дубликат по имени карты и дате
+                existing = self.db.query(CreditCard).filter(
+                    CreditCard.card_name == norm_name
+                ).first()
+
+                if existing:
+                    # Обновляем существующую запись
                     existing.planned_repayment_amount = repayment
-            else:
-                # Создаём новую запись с минимальными данными
-                # Для полноценного импорта нужны дополнительные данные из файла
-                if repayment > 0:
+                          if date_val:
+                        existing.grace_end_date = date_val.date()
+                else:
+                    # Создаём новую запись
                     card = CreditCard(
-                        user_id=1, # Default user
-                        card_name=name,
+                        user_id=1,
+                        card_name=norm_name,
                         grace_start_date=datetime.now().date(),
                         grace_period_days=50,
-                        current_debt=0.0,
+                        current_debt=amount,
                         planned_repayment_amount=repayment
                     )
+                    if date_val:
+                        card.grace_end_date = date_val.date()                    
                     self.db.add(card)
-                
+                    cards_created += 1
+
         self.db.commit()
-        print(f"✅ Импортировано кредитных карт")
+        print(f"✅ Импортировано {cards_created} кредитных карт")
 
     def import_weekly_budget_sheet(self, df: pd.DataFrame):
-        """Импортирует недельный бюджет"""
+        """
+        Импортирует недельный бюджет из листа 'Суммы для трат'.
+        Структура файла (при чтении с заголовком):
+        - Заголовок: МАЙ | Unnamed: 1 | Unnamed: 2 | Unnamed: 3
+        - Строка 0: 48853.22 | 8866 | 5032.29 | NaN (суммы по неделям)
+        - Строка 1: NaN | NaN | NaN | NaN (пустая)
+        - Строка 2: 01.05-10.05 | 11.05-17.05 | ... (диапазоны дат)
+
+        Модель WeeklyBudgetPlan имеет поля: user_id, month, year, week_number, planned_amount
+        """
         print(f"Импорт недельного бюджета...")
         
         # Получаем ID первого пользователя (администратора)
@@ -407,64 +459,78 @@ class ExcelImporter:
         admin_user = self.db.query(User).first()
         user_id = admin_user.id if admin_user else 1
         
-        # Структура: Месяц | Неделя 1 | Неделя 2 | ...
         plans_created = 0
-        for _, row in df.iterrows():
-            month_str = str(row.iloc[0]).strip()
-            if pd.isna(month_str) or len(month_str) < 3:
+        current_month = None
+        current_year = datetime.now().year
+
+        # Извлекаем месяц из заголовка первой колонки
+        first_col_name = str(df.columns[0]).strip()
+        month_lower = first_col_name.lower()
+
+        if 'май' in month_lower or 'may' in month_lower:
+            current_month = 5
+        elif 'июн' in month_lower or 'jun' in month_lower:
+            current_month = 6
+        elif 'июл' in month_lower or 'jul' in month_lower:
+            current_month = 7
+        elif 'авг' in month_lower or 'aug' in month_lower:
+            current_month = 8
+        elif 'сен' in month_lower or 'sep' in month_lower:
+            current_month = 9
+        elif 'окт' in month_lower or 'oct' in month_lower:
+            current_month = 10
+        elif 'ноя' in month_lower or 'nov' in month_lower:
+            current_month = 11
+        elif 'дек' in month_lower or 'dec' in month_lower:
+            current_month = 12
+        elif 'янв' in month_lower or 'jan' in month_lower:
+            current_month = 1
+        elif 'фев' in month_lower or 'feb' in month_lower:
+            current_month = 2
+                    elif 'мар' in month_lower or 'mar' in month_lower:
+            current_month = 3
+        elif 'апр' in month_lower or 'apr' in month_lower:
+            current_month = 4
+
+        # Проверяем год в названии
+        year_match = re.search(r'(20\d{2})', first_col_name)
+        if year_match:
+            current_year = int(year_match.group(1))
+
+        if not current_month:
+            print(f"  ⚠️ Не удалось определить месяц из заголовка: {first_col_name}")
+            return
+
+        # Берём первую строку данных (индекс 0) - там суммы по неделям
+        first_row = df.iloc[0]
+
+        # Парсим суммы по неделям из колонок 0, 1, 2 (индексы), что соответствует неделям 1, 2, 3
+        for week_num in range(1, 5):
+            col_idx = week_num - 1  # Индекс колонки (0-based)
+            if len(first_row) <= col_idx:
                 continue
             
-            # Парсим месяц (например, "МАЙ" или "Май 2026")
-            month_num = None
-            year = datetime.now().year
-            
-            month_lower = month_str.lower()
-            if 'май' in month_lower or 'may' in month_lower:
-                month_num = 5
-            elif 'июн' in month_lower or 'jun' in month_lower:
-                month_num = 6
-            elif 'июл' in month_lower or 'jul' in month_lower:
-                month_num = 7
-            elif 'авг' in month_lower or 'aug' in month_lower:
-                month_num = 8
-            elif 'сен' in month_lower or 'sep' in month_lower:
-                month_num = 9
-            elif 'окт' in month_lower or 'oct' in month_lower:
-                month_num = 10
-            elif 'ноя' in month_lower or 'nov' in month_lower:
-                month_num = 11
-            elif 'дек' in month_lower or 'dec' in month_lower:
-                month_num = 12
-            elif 'янв' in month_lower or 'jan' in month_lower:
-                month_num = 1
-            elif 'фев' in month_lower or 'feb' in month_lower:
-                month_num = 2
-            elif 'мар' in month_lower or 'mar' in month_lower:
-                month_num = 3
-            elif 'апр' in month_lower or 'apr' in month_lower:
-                month_num = 4
-            
-            if not month_num:
+            amount_val = first_row.iloc[col_idx]
+
+            if pd.isna(amount_val):
                 continue
-            
-            for i in range(1, 5): # 4 недели
-                if len(row) > i:
-                    try:
-                        amount_val = row.iloc[i]
-                        if pd.isna(amount_val):
-                            continue
-                        amount = float(str(amount_val).replace(',', '.').replace(' ', ''))
-                        plan = WeeklyBudgetPlan(
-                            user_id=user_id,
-                            month=month_num,
-                            year=year,
-                            week_number=i,
-                            planned_amount=amount
-                        )
-                        self.db.add(plan)
-                        plans_created += 1
-                    except (ValueError, TypeError):
-                        pass
+
+            try:
+                amount = float(str(amount_val).replace(',', '.').replace(' ', ''))
+                if amount <= 0:
+                    continue
+
+                plan = WeeklyBudgetPlan(
+                    user_id=user_id,
+                    month=current_month,
+                    year=current_year,
+                    week_number=week_num,
+                    planned_amount=amount
+                )
+                self.db.add(plan)
+                plans_created += 1
+            except (ValueError, TypeError):
+                pass
         
         self.db.commit()
         print(f"✅ Импортировано {plans_created} недельных планов")

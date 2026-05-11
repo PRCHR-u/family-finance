@@ -305,14 +305,42 @@ def register(payload: UserCreate, db: Session = Depends(get_db)):
 
 
 @app.post("/auth/login", response_model=TokenResponse)
-def login(payload: LoginRequest, db: Session = Depends(get_db)):
-    user = db.scalar(select(User).where(User.username == payload.username))
-    if not user or not verify_password(payload.password, user.hashed_password):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Неверный логин или пароль.")
-    if not user.is_active:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Пользователь деактивирован.")
-    return TokenResponse(access_token=create_access_token(subject=user.username))
+async def login(request: Request, db: Session = Depends(get_db)):
+    # Получаем сырое тело запроса для отладки
+    body = await request.body()
+    print(f"=== DEBUG RAW BODY ===: {body.decode('utf-8')}")
+    print(f"=== DEBUG HEADERS ===: {request.headers.get('content-type')}")
+    
+    # Пытаемся распарсить как форму (стандарт OAuth2)
+    try:
+        form_data = await request.form()
+        username = form_data.get("username")
+        password = form_data.get("password")
+        print(f"=== DEBUG FORM DATA ===: username={username}, password={'***' if password else 'None'}")
+    except Exception as e:
+        print(f"=== DEBUG FORM ERROR ===: {e}")
+        raise HTTPException(status_code=400, detail="Invalid form data")
 
+    if not username or not password:
+        raise HTTPException(status_code=400, detail="Username and password are required")
+
+    user = db.scalar(select(User).where(User.username == username))
+    
+    print(f"=== DEBUG USER FOUND ===: {user is not None}")
+    
+    if not user:
+        raise HTTPException(status_code=401, detail="Неверный логин или пароль.")
+        
+    if not verify_password(password, user.hashed_password):
+        print("=== DEBUG PASSWORD CHECK ===: FAILED")
+        raise HTTPException(status_code=401, detail="Неверный логин или пароль.")
+    
+    if not user.is_active:
+        raise HTTPException(status_code=403, detail="Пользователь деактивирован.")
+        
+    print("=== DEBUG LOGIN SUCCESS ===")
+    return TokenResponse(access_token=create_access_token(subject=user.username))
+    
 
 @app.post("/users", response_model=UserRead, status_code=status.HTTP_201_CREATED)
 def create_user(payload: UserCreate, db: Session = Depends(get_db), admin: User = Depends(require_admin)):
