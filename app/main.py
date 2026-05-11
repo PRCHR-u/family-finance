@@ -1414,6 +1414,55 @@ def import_excel_full(
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Ошибка импорта: {str(e)}")
 
 
+@app.post("/imports/excel-reset", response_model=Dict[str, Any])
+def import_excel_reset(
+    file_path: str = "ДОЛГИ.xlsx",
+    target_user_id: int | None = None,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin),
+):
+    """
+    Полная очистка БД и импорт данных из Excel файла.
+    Используется для первичной настройки или сброса данных.
+    НЕ предназначен для продакшена - только для администраторов при первоначальной настройке.
+    """
+    from .services.excel_importer import ExcelImporter
+    
+    try:
+        # Проверяем существование файла
+        if not Path(file_path).exists():
+            raise FileNotFoundError(f"Файл не найден: {file_path}")
+        
+        # Создаём импортер и очищаем БД
+        importer = ExcelImporter(db=db, file_path=file_path)
+        importer.clear_existing_data()
+        
+        # Запускаем полный импорт
+        result = importer.run_full_import()
+        
+        if result["status"] == "error":
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=result["message"])
+        
+        _log_action(
+            db,
+            "imports.excel_reset",
+            actor_user_id=admin.id,
+            target_user_id=target_user_id or admin.id,
+            details=f"file={file_path}, full reset and import completed",
+        )
+        
+        return {
+            "status": "success",
+            "message": "База данных очищена и данные импортированы",
+            "file": file_path
+        }
+        
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Ошибка импорта: {str(e)}")
+
+
 # ==================== INCOME ENDPOINTS ====================
 
 @app.post("/incomes", response_model=IncomeRead, status_code=status.HTTP_201_CREATED)

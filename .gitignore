@@ -1,37 +1,31 @@
-```python
+```
 # Database files
 *.db
 
-# Python
+# Environment files
+.env
+.env.local
+*.env.*
+
+# Dependencies
+.venv/
+venv/
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
-.Python
-env/
-venv/
-.venv/
-.ENV
-.ENV.local
-.env
-.env.local
-.env.*
-*.env.*
 
-# Excel files
-*.xlsx
-*.xls
-*.csv
-
-# Logs
+# Logs and temp files
 *.log
+*.tmp
+*.swp
 
-# OS generated files
-.DS_Store
-.DS_Store?
-._*
-.Spotlight-V100
-.Trashes
-ehthumbs.db
-Thumbs.db
+# Editors
+.vscode/
+.idea/
+
+# Build artifacts
+dist/
+build/
+*.egg-info/
 ```
