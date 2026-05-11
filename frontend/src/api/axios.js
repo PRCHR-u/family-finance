@@ -35,3 +35,11 @@ api.interceptors.response.use(
 );
 
 export default api;
+
+// Отдельный экземпляр для auth запросов (form-data)
+export const authApi = axios.create({
+  baseURL: API_BASE_URL,
+  headers: {
+    'Content-Type': 'application/x-www-form-urlencoded',
+  },
+});
