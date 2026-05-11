@@ -5,3 +5,101 @@ OpenBLAS WARNING - could not determine the L2 cache size on this system, assumin
 INFO:     Started server process [2563]
 INFO:     Waiting for application startup.
 INFO:     Application startup complete.
+WARNING:  WatchFiles detected changes in 'app/main.py'. Reloading...
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [2563]
+OpenBLAS WARNING - could not determine the L2 cache size on this system, assuming 256k
+INFO:     Started server process [3024]
+INFO:     Waiting for application startup.
+(trapped) error reading bcrypt version
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.12/site-packages/passlib/handlers/bcrypt.py", line 620, in _load_backend_mixin
+    version = _bcrypt.__about__.__version__
+              ^^^^^^^^^^^^^^^^^
+AttributeError: module 'bcrypt' has no attribute '__about__'
+ERROR:    Traceback (most recent call last):
+  File "/usr/local/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1967, in _exec_single_context
+    self.dialect.do_execute(
+  File "/usr/local/lib/python3.12/site-packages/sqlalchemy/engine/default.py", line 941, in do_execute
+    cursor.execute(statement, parameters)
+sqlite3.IntegrityError: UNIQUE constraint failed: users.username
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.12/site-packages/starlette/routing.py", line 693, in lifespan
+    async with self.lifespan_context(app) as maybe_state:
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/starlette/routing.py", line 569, in __aenter__
+    await self._router.startup()
+  File "/usr/local/lib/python3.12/site-packages/starlette/routing.py", line 672, in startup
+    handler()
+  File "/workspace/app/main.py", line 160, in on_startup
+    init_db()
+  File "/workspace/app/database.py", line 50, in init_db
+    db.commit()
+  File "/usr/local/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 2028, in commit
+    trans.commit(_to_root=True)
+  File "<string>", line 2, in commit
+  File "/usr/local/lib/python3.12/site-packages/sqlalchemy/orm/state_changes.py", line 139, in _go
+    ret_value = fn(self, *arg, **kw)
+                ^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 1313, in commit
+    self._prepare_impl()
+  File "<string>", line 2, in _prepare_impl
+  File "/usr/local/lib/python3.12/site-packages/sqlalchemy/orm/state_changes.py", line 139, in _go
+    ret_value = fn(self, *arg, **kw)
+                ^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 1288, in _prepare_impl
+    self.session.flush()
+  File "/usr/local/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 4352, in flush
+    self._flush(objects)
+  File "/usr/local/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 4487, in _flush
+    with util.safe_reraise():
+         ^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/sqlalchemy/util/langhelpers.py", line 146, in __exit__
+    raise exc_value.with_traceback(exc_tb)
+  File "/usr/local/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 4448, in _flush
+    flush_context.execute()
+  File "/usr/local/lib/python3.12/site-packages/sqlalchemy/orm/unitofwork.py", line 466, in execute
+    rec.execute(self)
+  File "/usr/local/lib/python3.12/site-packages/sqlalchemy/orm/unitofwork.py", line 642, in execute
+    util.preloaded.orm_persistence.save_obj(
+  File "/usr/local/lib/python3.12/site-packages/sqlalchemy/orm/persistence.py", line 93, in save_obj
+    _emit_insert_statements(
+  File "/usr/local/lib/python3.12/site-packages/sqlalchemy/orm/persistence.py", line 1233, in _emit_insert_statements
+    result = connection.execute(
+             ^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1418, in execute
+    return meth(
+           ^^^^^
+  File "/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/elements.py", line 515, in _execute_on_connection
+    return connection._execute_clauseelement(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1640, in _execute_clauseelement
+    ret = self._execute_context(
+          ^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1846, in _execute_context
+    return self._exec_single_context(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1986, in _exec_single_context
+    self._handle_dbapi_exception(
+  File "/usr/local/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 2355, in _handle_dbapi_exception
+    raise sqlalchemy_exception.with_traceback(exc_info[2]) from e
+  File "/usr/local/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1967, in _exec_single_context
+    self.dialect.do_execute(
+  File "/usr/local/lib/python3.12/site-packages/sqlalchemy/engine/default.py", line 941, in do_execute
+    cursor.execute(statement, parameters)
+sqlalchemy.exc.IntegrityError: (sqlite3.IntegrityError) UNIQUE constraint failed: users.username
+[SQL: INSERT INTO users (username, hashed_password, role, is_active, family_id) VALUES (?, ?, ?, ?, ?)]
+[parameters: ('admin', '$2b$12$OinGLKkcKRzAoCqdL2.BkuQvt9w7n84RR4vCvcIIm8N1d0NcggRbu', 'ADMIN', 1, None)]
+(Background on this error at: https://sqlalche.me/e/20/gkpj)
+
+ERROR:    Application startup failed. Exiting.
+Ошибка инициализации БД: (sqlite3.IntegrityError) UNIQUE constraint failed: users.username
+[SQL: INSERT INTO users (username, hashed_password, role, is_active, family_id) VALUES (?, ?, ?, ?, ?)]
+[parameters: ('admin', '$2b$12$OinGLKkcKRzAoCqdL2.BkuQvt9w7n84RR4vCvcIIm8N1d0NcggRbu', 'ADMIN', 1, None)]
+(Background on this error at: https://sqlalche.me/e/20/gkpj)
+INFO:     Stopping reloader process [2556]

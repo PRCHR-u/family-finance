@@ -296,12 +296,18 @@ def require_family_admin(current_user: User = Depends(get_current_user)) -> User
 def get_family_members_for_user(user: User) -> list[int]:
     """Возвращает список ID пользователей в той же семье (включая самого пользователя)."""
     if user.role == UserRole.ADMIN:
-        # Админ видит всех
-        return []
+        # Админ может быть главой семьи или обычным пользователем
+        # Если у админа есть family_id, он принадлежит к семье
+        if user.family_id is not None:
+            # Админ - член семьи, получаем всех членов
+            return [user.family_id] + [m.id for m in getattr(user.family, 'family_members', []) if m]
+        else:
+            # Админ без семьи - видит только себя
+            return [user.id]
     
     if user.family_id is None:
-        # Пользователь без семьи - видит только себя
-        return [user.id]
+        # Пользователь - глава семьи (у него нет family_id, но у него могут быть члены)
+        return [user.id] + [m.id for m in user.family_members if m]
     
     # Возвращаем ID всех членов семьи (глава + члены)
     return [user.family_id] + [m.id for m in getattr(user.family, 'family_members', []) if m]
