@@ -1,8 +1,14 @@
 ```
-# Database files
-*.db
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
 
-# Environment files
+# Logs
+*.log
+
+# Environment
 .env
 .env.local
 *.env.*
@@ -10,22 +16,10 @@
 # Dependencies
 .venv/
 venv/
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
-
-# Logs and temp files
-*.log
-*.tmp
-*.swp
-
-# Editors
-.vscode/
-.idea/
+node_modules/
 
 # Build artifacts
 dist/
 build/
-*.egg-info/
+target/
 ```

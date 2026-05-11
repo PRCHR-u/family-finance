@@ -11,8 +11,10 @@ RUN apt-get update && apt-get install -y \
 # Копирование зависимостей
 COPY requirements.txt .
 
-# Установка Python-зависимостей
+# Установка Python-зависимостей (кэширование слоя)
 RUN pip install --no-cache-dir -r requirements.txt
+
+# Установка production-сервера
 RUN pip install --no-cache-dir gunicorn
 
 # Копирование кода приложения
@@ -25,7 +27,10 @@ RUN mkdir -p /app/data /app/logs
 ENV PYTHONUNBUFFERED=1 \
     DATABASE_URL=sqlite:///./data/family_finance.db \
     HOST=0.0.0.0 \
-    PORT=8000
+    PORT=8000 \
+    SECRET_KEY=${SECRET_KEY:-change-this-secret-key-in-production} \
+    ADMIN_EMAIL=${ADMIN_EMAIL:-admin@example.com} \
+    ADMIN_PASSWORD=${ADMIN_PASSWORD:-ChangeMe123!}
 
 # Порт приложения
 EXPOSE 8000

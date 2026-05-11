@@ -2,7 +2,9 @@ version: '3.8'
 
 services:
   app:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile
     container_name: family-finance
     restart: unless-stopped
     ports:
@@ -12,7 +14,7 @@ services:
       - family-finance-data:/app/data
       - ./logs:/app/logs
     environment:
-      # КРИТИЧЕСКИ ВАЖНО: Замените на надежный ключ!
+      # КРИТИЧЕСКИ ВАЖНО: Замените на надежный ключ в production!
       - SECRET_KEY=${SECRET_KEY:-change-this-secret-key-in-production}
       - DATABASE_URL=sqlite:///./data/family_finance.db
       - ACCESS_TOKEN_EXPIRE_MINUTES=30
