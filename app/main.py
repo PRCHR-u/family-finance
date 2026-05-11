@@ -296,12 +296,12 @@ def require_family_admin(current_user: User = Depends(get_current_user)) -> User
 def get_family_members_for_user(user: User) -> list[int]:
     """Возвращает список ID пользователей в той же семье (включая самого пользователя)."""
     if user.role == UserRole.ADMIN:
-        # Админ видит всех
-        return []
+        # Админ без семьи - видит только себя
+        return [user.id]
     
     if user.family_id is None:
-        # Пользователь без семьи - видит только себя
-        return [user.id]
+        # Пользователь - глава семьи (у него нет family_id, но у него могут быть члены)
+        return [user.id] + [m.id for m in user.family_members if m]
     
     # Возвращаем ID всех членов семьи (глава + члены)
     return [user.family_id] + [m.id for m in getattr(user.family, 'family_members', []) if m]
@@ -369,9 +369,9 @@ def get_family_members(db: Session = Depends(get_db), current_user: User = Depen
     """Получение списка членов семьи."""
     if current_user.role == UserRole.ADMIN:
         # Админ не имеет семьи в этой модели
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, 
-            detail="Администратор не принадлежит к семье."
+        return FamilyMembersResponse(
+            family_admin=None,
+            members=[]
         )
     
     if current_user.family_id is None:

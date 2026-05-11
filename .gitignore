@@ -6,8 +6,9 @@ __pycache__/
 *.pyd
 
 # Database
-*.db
+family_finance.db
 
 # Logs
 *.log
+server.log
 ```
