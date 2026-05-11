@@ -16,9 +16,28 @@ class UserRead(BaseModel):
     username: str
     role: UserRole
     is_active: bool
+    family_id: int | None = None
 
     class Config:
         from_attributes = True
+
+
+class FamilyMemberRead(BaseModel):
+    """Информация о члене семьи."""
+    id: int
+    username: str
+    role: UserRole
+    is_active: bool
+    created_at: datetime | None = None
+
+    class Config:
+        from_attributes = True
+
+
+class FamilyMembersResponse(BaseModel):
+    """Список членов семьи."""
+    family_admin: UserRead
+    members: list[FamilyMemberRead]
 
 
 class LoginRequest(BaseModel):

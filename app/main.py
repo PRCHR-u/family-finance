@@ -61,6 +61,8 @@ from .schemas import (
     DebtSummary,
     ExpenseCreate,
     ExpenseRead,
+    FamilyMemberRead,
+    FamilyMembersResponse,
     FinanceRecordCreate,
     FinanceRecordRead,
     FinanceRecordUpdate,
@@ -281,6 +283,30 @@ def require_admin(current_user: User = Depends(get_current_user)) -> User:
     return current_user
 
 
+def require_family_admin(current_user: User = Depends(get_current_user)) -> User:
+    """Требует, чтобы пользователь был главой семьи (FAMILY_ADMIN) или ADMIN."""
+    if current_user.role not in [UserRole.ADMIN, UserRole.FAMILY_ADMIN]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, 
+            detail="Нужны права главы семьи."
+        )
+    return current_user
+
+
+def get_family_members_for_user(user: User) -> list[int]:
+    """Возвращает список ID пользователей в той же семье (включая самого пользователя)."""
+    if user.role == UserRole.ADMIN:
+        # Админ видит всех
+        return []
+    
+    if user.family_id is None:
+        # Пользователь без семьи - видит только себя
+        return [user.id]
+    
+    # Возвращаем ID всех членов семьи (глава + члены)
+    return [user.family_id] + [m.id for m in getattr(user.family, 'family_members', []) if m]
+
+
 @app.get("/health")
 def health():
     return {"status": "ok"}
@@ -293,7 +319,7 @@ def register(payload: UserCreate, db: Session = Depends(get_db)):
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Пользователь уже существует.")
     user = User(
         username=payload.username,
-        role=UserRole.USER,
+        role=UserRole.FAMILY_ADMIN,  # Первый пользователь становится главой семьи
         hashed_password=get_password_hash(payload.password),
     )
     db.add(user)
@@ -302,6 +328,87 @@ def register(payload: UserCreate, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(user)
     return user
+
+
+@app.post("/family/add-member", response_model=UserRead)
+def add_family_member(
+    payload: UserCreate,
+    db: Session = Depends(get_db),
+    family_admin: User = Depends(require_family_admin),
+):
+    """Добавление нового члена семьи. Доступно только главе семьи или ADMIN."""
+    existing = db.scalar(select(User).where(User.username == payload.username))
+    if existing:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Пользователь уже существует.")
+    
+    # Определяем главу семьи
+    family_head_id = family_admin.id if family_admin.role == UserRole.FAMILY_ADMIN else family_admin.id
+    
+    user = User(
+        username=payload.username,
+        role=UserRole.USER,
+        hashed_password=get_password_hash(payload.password),
+        family_id=family_head_id,
+    )
+    db.add(user)
+    db.flush()
+    _log_action(
+        db,
+        "family.add_member",
+        actor_user_id=family_admin.id,
+        target_user_id=user.id,
+        details=f"username={user.username}, family_admin_id={family_head_id}",
+    )
+    db.commit()
+    db.refresh(user)
+    return user
+
+
+@app.get("/family/members", response_model=FamilyMembersResponse)
+def get_family_members(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """Получение списка членов семьи."""
+    if current_user.role == UserRole.ADMIN:
+        # Админ не имеет семьи в этой модели
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, 
+            detail="Администратор не принадлежит к семье."
+        )
+    
+    if current_user.family_id is None:
+        # Пользователь - глава семьи (у него нет family_id, но у него могут быть члены)
+        family_admin = current_user
+        members = db.scalars(
+            select(User).where(User.family_id == current_user.id).order_by(User.id.asc())
+        ).all()
+    else:
+        # Пользователь - член семьи, получаем главу и остальных членов
+        family_admin = db.scalar(select(User).where(User.id == current_user.family_id))
+        if not family_admin:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Глава семьи не найден.")
+        members = db.scalars(
+            select(User).where(
+                (User.family_id == current_user.family_id) & (User.id != current_user.family_id)
+            ).order_by(User.id.asc())
+        ).all()
+    
+    return FamilyMembersResponse(
+        family_admin=UserRead(
+            id=family_admin.id,
+            username=family_admin.username,
+            role=family_admin.role,
+            is_active=family_admin.is_active,
+            family_id=None
+        ),
+        members=[
+            FamilyMemberRead(
+                id=m.id,
+                username=m.username,
+                role=m.role,
+                is_active=m.is_active,
+            )
+            for m in members
+        ]
+    )
 
 
 @app.post("/auth/login", response_model=TokenResponse)
@@ -516,10 +623,24 @@ def list_debts(
     moderation_status: RecordStatus | None = Query(default=None),
 ):
     stmt = select(Debt)
-    if current_user.role != UserRole.ADMIN:
+    
+    # Определяем ID пользователей, чьи данные можно видеть
+    if current_user.role == UserRole.ADMIN:
+        # Админ видит всех
+        if user_id is not None:
+            stmt = stmt.where(Debt.user_id == user_id)
+    elif current_user.role == UserRole.FAMILY_ADMIN or current_user.family_id is not None:
+        # Глава семьи или член семьи - видим все записи в семье
+        family_ids = get_family_members_for_user(current_user)
+        if family_ids:  # Если не пустой список
+            stmt = stmt.where(Debt.user_id.in_(family_ids))
+        else:
+            # Админ без ограничений (уже обработано выше)
+            pass
+    else:
+        # Обычный пользователь без семьи - видит только свои записи
         stmt = stmt.where(Debt.user_id == current_user.id)
-    elif user_id is not None:
-        stmt = stmt.where(Debt.user_id == user_id)
+    
     if debt_status is not None:
         stmt = stmt.where(Debt.status == debt_status)
     if moderation_status is not None:
@@ -789,10 +910,21 @@ def list_credit_cards(
     moderation_status: RecordStatus | None = Query(default=None),
 ):
     stmt = select(CreditCard)
-    if current_user.role != UserRole.ADMIN:
+    
+    # Определяем ID пользователей, чьи данные можно видеть
+    if current_user.role == UserRole.ADMIN:
+        # Админ видит всех
+        if user_id is not None:
+            stmt = stmt.where(CreditCard.user_id == user_id)
+    elif current_user.role == UserRole.FAMILY_ADMIN or current_user.family_id is not None:
+        # Глава семьи или член семьи - видим все записи в семье
+        family_ids = get_family_members_for_user(current_user)
+        if family_ids:
+            stmt = stmt.where(CreditCard.user_id.in_(family_ids))
+    else:
+        # Обычный пользователь без семьи - видит только свои записи
         stmt = stmt.where(CreditCard.user_id == current_user.id)
-    elif user_id is not None:
-        stmt = stmt.where(CreditCard.user_id == user_id)
+    
     if status_filter is not None:
         stmt = stmt.where(CreditCard.status == status_filter)
     if moderation_status is not None:
@@ -888,10 +1020,21 @@ def list_records(
     user_id: int | None = Query(default=None),
 ):
     stmt = select(FinanceRecord)
-    if current_user.role != UserRole.ADMIN:
+    
+    # Определяем ID пользователей, чьи данные можно видеть
+    if current_user.role == UserRole.ADMIN:
+        # Админ видит всех
+        if user_id is not None:
+            stmt = stmt.where(FinanceRecord.user_id == user_id)
+    elif current_user.role == UserRole.FAMILY_ADMIN or current_user.family_id is not None:
+        # Глава семьи или член семьи - видим все записи в семье
+        family_ids = get_family_members_for_user(current_user)
+        if family_ids:
+            stmt = stmt.where(FinanceRecord.user_id.in_(family_ids))
+    else:
+        # Обычный пользователь без семьи - видит только свои записи
         stmt = stmt.where(FinanceRecord.user_id == current_user.id)
-    elif user_id is not None:
-        stmt = stmt.where(FinanceRecord.user_id == user_id)
+    
     if status_filter is not None:
         stmt = stmt.where(FinanceRecord.status == status_filter)
     return db.scalars(stmt.order_by(FinanceRecord.period_date.asc(), FinanceRecord.id.asc())).all()
@@ -1530,10 +1673,21 @@ def list_incomes(
     is_actual: bool | None = Query(default=None),
 ):
     stmt = select(Income)
-    if current_user.role != UserRole.ADMIN:
+    
+    # Определяем ID пользователей, чьи данные можно видеть
+    if current_user.role == UserRole.ADMIN:
+        # Админ видит всех
+        if user_id is not None:
+            stmt = stmt.where(Income.user_id == user_id)
+    elif current_user.role == UserRole.FAMILY_ADMIN or current_user.family_id is not None:
+        # Глава семьи или член семьи - видим все записи в семье
+        family_ids = get_family_members_for_user(current_user)
+        if family_ids:
+            stmt = stmt.where(Income.user_id.in_(family_ids))
+    else:
+        # Обычный пользователь без семьи - видит только свои записи
         stmt = stmt.where(Income.user_id == current_user.id)
-    elif user_id is not None:
-        stmt = stmt.where(Income.user_id == user_id)
+    
     if moderation_status is not None:
         stmt = stmt.where(Income.moderation_status == moderation_status)
     if is_actual is not None:
@@ -1614,10 +1768,21 @@ def list_expenses(
     is_mandatory: bool | None = Query(default=None),
 ):
     stmt = select(Expense)
-    if current_user.role != UserRole.ADMIN:
+    
+    # Определяем ID пользователей, чьи данные можно видеть
+    if current_user.role == UserRole.ADMIN:
+        # Админ видит всех
+        if user_id is not None:
+            stmt = stmt.where(Expense.user_id == user_id)
+    elif current_user.role == UserRole.FAMILY_ADMIN or current_user.family_id is not None:
+        # Глава семьи или член семьи - видим все записи в семье
+        family_ids = get_family_members_for_user(current_user)
+        if family_ids:
+            stmt = stmt.where(Expense.user_id.in_(family_ids))
+    else:
+        # Обычный пользователь без семьи - видит только свои записи
         stmt = stmt.where(Expense.user_id == current_user.id)
-    elif user_id is not None:
-        stmt = stmt.where(Expense.user_id == user_id)
+    
     if moderation_status is not None:
         stmt = stmt.where(Expense.moderation_status == moderation_status)
     if is_completed is not None:
