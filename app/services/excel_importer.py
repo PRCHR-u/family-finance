@@ -65,184 +65,297 @@ class ExcelImporter:
         self.db.commit()
 
     def import_sheet1_debts(self, df: pd.DataFrame):
-        """Импортирует историю долгов из листа Sheet1"""
-        print(f"Импорт долгов из {len(df)} строк...")
+        """
+        Импортирует историю долгов из листа Sheet1 со специфической структурой:
+        - Строка 0: NaT | СБЕР | ОЛЯ т-банк | Оля СБЕР | Т-БАНК | ... (названия кредиторов)
+        - Строка 1: 2025-12-23 | 415705.44 | 15714.24 | ... (значения сумм)
+        - Строка 2: NaT | СБЕР | Т-БАНК | ... (новые названия, если меняются)
+        - Строка 3: 2026-01-20 | 430716.51 | ... (значения сумм)
         
-        # Определяем колонки динамически
-        date_col = None
-        for col in df.columns:
-            if 'дата' in str(col).lower() or 'date' in str(col).lower():
-                date_col = col
-                break
+        Модель DebtHistory имеет поля: creditor, amount, record_date, debt_change
+        Каждая запись - это долг одного кредитора на конкретную дату.
+        """
+        print(f"Импорт долгов из {len(df)} строк (специфический формат)...")
         
-        if not date_col:
-            print("❌ Не найдена колонка с датой")
-            return
-
-        creditors = [c for c in df.columns if c != date_col and not pd.isna(c)]
+        # Преобразуем DataFrame в список строк для удобной обработки
+        rows_list = []
+        for idx, row in df.iterrows():
+            # Берём первые 8 колонок (основные данные)
+            row_data = []
+            for i in range(min(8, len(row))):
+                val = row.iloc[i]
+                row_data.append(val)
+            rows_list.append(row_data)
         
-        for _, row in df.iterrows():
-            date_val = self.normalize_date(row[date_col])
-            if not date_val:
-                continue
-                
-            total_debt = 0.0
-            debts_data = []
+        # Парсим структуру: чередование строк с названиями и строк с данными
+        current_creditor_names = None
+        records_created = 0
+        
+        # Словарь для отслеживания предыдущего общего долга по датам
+        prev_total_by_date = {}
+        
+        for i, row_data in enumerate(rows_list):
+            # Первая колонка - потенциальная дата или NaT
+            first_val = row_data[0] if len(row_data) > 0 else None
             
-            for creditor in creditors:
-                val = row.get(creditor)
-                if pd.isna(val):
-                    continue
-                    
-                try:
-                    amount = float(str(val).replace(',', '.').replace(' ', ''))
-                except ValueError:
-                    continue
-                
-                if amount == 0:
-                    continue
-                    
-                norm_name = self.normalize_creditor_name(creditor)
-                
-                debts_data.append({
-                    'creditor_name': norm_name,
-                    'amount': amount,
-                })
-                total_debt += amount
-
-            # Вычисляем изменение долга
-            prev_record = self.db.query(DebtHistory).filter(
-                DebtHistory.record_date < date_val
-            ).order_by(DebtHistory.record_date.desc()).first()
+            # Проверяем, является ли первая колонка датой
+            date_val = self.normalize_date(first_val)
             
-            debt_change = None
-            if prev_record:
-                debt_change = total_debt - prev_record.total_debt
-
-            record = DebtHistory(
-                record_date=date_val,
-                total_debt=total_debt,
-                debt_change=debt_change,
-                details=debts_data
-            )
-            self.db.add(record)
+            if date_val:
+                # Это строка с датой и суммами по кредиторам
+                # current_creditor_names должна быть установлена из предыдущей строки
+                if not current_creditor_names:
+                    print(f"  ⚠️ Предупреждение: нет названий кредиторов для даты {date_val}")
+                    continue
+                
+                # Сначала собираем все долги на эту дату для расчёта total_debt
+                debts_to_create = []
+                total_debt = 0.0
+                
+                for j in range(1, len(row_data)):  # Начинаем с 1, т.к. 0 - это дата
+                    amount_val = row_data[j]
+                    if j >= len(current_creditor_names):
+                        break
+                    
+                    creditor_name = current_creditor_names[j]
+                    if not creditor_name:
+                        continue
+                    
+                    # Парсим сумму
+                    if pd.isna(amount_val):
+                        continue
+                    
+                    try:
+                        amount_str = str(amount_val).replace(',', '.').replace(' ', '')
+                        amount = float(amount_str)
+                    except (ValueError, TypeError):
+                        continue
+                    
+                    # Пропускаем нулевые значения
+                    if amount == 0:
+                        continue
+                    
+                    # Нормализуем имя кредитора
+                    norm_name = self.normalize_creditor_name(creditor_name)
+                    
+                    debts_to_create.append({
+                        'creditor': norm_name,
+                        'amount': amount,
+                    })
+                    total_debt += amount
+                
+                # Вычисляем изменение долга относительно предыдущей даты
+                sorted_dates = sorted(prev_total_by_date.keys())
+                prev_total = None
+                for d in sorted_dates:
+                    if d < date_val:
+                        prev_total = prev_total_by_date[d]
+                
+                debt_change = None
+                if prev_total is not None:
+                    debt_change = total_debt - prev_total
+                
+                # Сохраняем общий долг для этой даты
+                prev_total_by_date[date_val] = total_debt
+                
+                # Создаём записи для каждого кредитора
+                for debt_info in debts_to_create:
+                    record = DebtHistory(
+                        creditor=debt_info['creditor'],
+                        amount=debt_info['amount'],
+                        record_date=date_val,
+                        debt_change=debt_change
+                    )
+                    self.db.add(record)
+                    records_created += 1
+            else:
+                # Это строка с названиями кредиторов (или служебная строка)
+                # Проверяем, есть ли в строке названия (не NaN, не числа)
+                creditor_names = []
+                has_valid_names = False
+                
+                for j, val in enumerate(row_data):
+                    if pd.isna(val) or (isinstance(val, float) and val != val):  # NaN check
+                        creditor_names.append(None)
+                    elif isinstance(val, (int, float)):
+                        # Это число, а не название - пропускаем эту строку
+                        creditor_names.append(None)
+                    else:
+                        name_str = str(val).strip().upper()
+                        # Пропускаем служебные названия
+                        if any(keyword in name_str for keyword in ['ВСЕГО', 'РАЗНИЦА', 'ИЗМЕНЕНИЕ', 'ДОЛГ', 'ВЕСНУ', 'Unnamed']):
+                            creditor_names.append(None)
+                        else:
+                            creditor_names.append(name_str)
+                            has_valid_names = True
+                
+                if has_valid_names:
+                    current_creditor_names = creditor_names
         
         self.db.commit()
-        print(f"✅ Импортировано записей о долгах")
+        print(f"✅ Импортировано {records_created} записей о долгах")
 
     def import_income_sheet(self, df: pd.DataFrame):
-        """Импортирует доходы из листа 'доход'"""
+        """
+        Импортирует доходы из листа 'доход'.
+        Структура: Доход | сколько | когда | ...
+        Пример: лиза долг | 22533 | до 13.05
+        
+        Модель Income имеет поля: user_id, amount, income_date, category, description, is_actual
+        """
         print(f"Импорт доходов из {len(df)} строк...")
         
-        # Ожидаемая структура: Дата | Категория | Сумма | Комментарий
-        # Или: Дата | Стипендия | Зарплата | ...
+        incomes_created = 0
+        
+        # Получаем ID первого пользователя (администратора)
+        from app.models import User
+        admin_user = self.db.query(User).first()
+        user_id = admin_user.id if admin_user else 1
         
         for _, row in df.iterrows():
-            date_val = None
-            amount = 0.0
-            category = ExpenseCategory.OTHER
-            comment = ""
-            
-            # Пытаемся найти дату в первой колонке
-            first_col = df.columns[0]
-            date_val = self.normalize_date(row[first_col])
-            
-            if not date_val:
+            # Получаем значения из первых трёх колонок
+            if len(row) < 3:
                 continue
                 
-            # Если структура широкая (колонки это категории)
-            for col in df.columns[1:]:
-                val = row[col]
-                if pd.isna(val):
-                    continue
-                try:
-                    amt = float(str(val).replace(',', '.').replace(' ', ''))
-                    if amt > 0:
-                        amount = amt
-                        col_lower = str(col).lower()
-                        if 'стипендия' in col_lower:
-                            category = IncomeCategory.SCHOLARSHIP
-                        elif 'зарплат' in col_lower or 'работа' in col_lower:
-                            category = IncomeCategory.SALARY
-                        elif 'подар' in col_lower:
-                            category = IncomeCategory.GIFT
-                        elif 'отец' in col_lower or 'мама' in col_lower:
-                            category = IncomeCategory.GIFT
-                        comment = str(col)
-                        break
-                except ValueError:
-                    pass
+            source = str(row.iloc[0]).strip() if pd.notna(row.iloc[0]) else ""
+            amount_val = row.iloc[1] if len(row) > 1 else None
+            date_val_raw = row.iloc[2] if len(row) > 2 else None
             
-            if amount > 0 and date_val:
-                income = Income(
-                    transaction_date=date_val,
-                    amount=amount,
-                    category=category,
-                    description=comment,
-                    status='actual' # По умолчанию факт
-                )
-                self.db.add(income)
-        
-        self.db.commit()
-        print(f"✅ Импортировано доходов")
-
-    def import_expenses_sheet(self, df: pd.DataFrame):
-        """Импортирует траты из листа 'траты'"""
-        print(f"Импорт расходов из {len(df)} строк...")
-        
-        for _, row in df.iterrows():
-            date_val = None
-            amount = 0.0
-            category = ExpenseCategory.OTHER
-            is_mandatory = True # По умолчанию обязательные
+            # Пропускаем пустые строки
+            if not source or pd.isna(amount_val):
+                continue
             
-            first_col = df.columns[0]
-            date_val = self.normalize_date(row[first_col])
+            # Парсим сумму
+            try:
+                amount_str = str(amount_val).replace(',', '.').replace(' ', '')
+                amount = float(amount_str)
+            except (ValueError, TypeError):
+                continue
             
+            if amount <= 0:
+                continue
+            
+            # Парсим дату
+            date_val = self.normalize_date(date_val_raw)
             if not date_val:
                 continue
             
-            # Парсим колонки
-            for col in df.columns[1:]:
-                val = row[col]
-                if pd.isna(val):
-                    continue
-                try:
-                    amt = float(str(val).replace(',', '.').replace(' ', ''))
-                    if amt > 0:
-                        amount = amt
-                        col_lower = str(col).lower()
-                        
-                        if 'аренд' in col_lower:
-                            category = ExpenseCategory.RENT
-                        elif 'коммунал' in col_lower or 'свет' in col_lower or 'вода' in col_lower:
-                            category = ExpenseCategory.UTILITIES
-                        elif 'врач' in col_lower or 'мед' in col_lower or 'зуб' in col_lower:
-                            category = ExpenseCategory.MEDICAL
-                        elif 'подар' in col_lower:
-                            category = ExpenseCategory.GIFTS
-                            is_mandatory = False
-                        elif 'toefl' in col_lower or 'курс' in col_lower or 'учеб' in col_lower:
-                            category = ExpenseCategory.EDUCATION
-                        elif 'продукт' in col_lower or 'еда' in col_lower:
-                            category = ExpenseCategory.FOOD
-                            
-                        break
-                except ValueError:
-                    pass
+            # Определяем категорию по названию источника
+            source_lower = source.lower()
+            category = IncomeCategory.OTHER
             
-            if amount > 0 and date_val:
-                expense = Expense(
-                    transaction_date=date_val,
-                    amount=amount,
-                    category=category,
-                    description=str(col) if 'col' in locals() else "Расход",
-                    is_mandatory=is_mandatory
-                )
-                self.db.add(expense)
+            if 'стипенд' in source_lower:
+                category = IncomeCategory.SCHOLARSHIP
+            elif 'зарплат' in source_lower or 'аванс' in source_lower or 'склад' in source_lower:
+                category = IncomeCategory.SALARY
+            elif 'подар' in source_lower or 'др' in source_lower:
+                category = IncomeCategory.GIFT
+            elif 'отец' in source_lower or 'мама' in source_lower or 'долг' in source_lower:
+                category = IncomeCategory.GIFT
+            elif 'занят' in source_lower or 'урок' in source_lower:
+                category = IncomeCategory.FREELANCE
+            
+            income = Income(
+                user_id=user_id,
+                amount=amount,
+                income_date=date_val,
+                category=category,
+                description=source,
+                is_actual=True
+            )
+            self.db.add(income)
+            incomes_created += 1
         
         self.db.commit()
-        print(f"✅ Импортировано расходов")
+        print(f"✅ Импортировано {incomes_created} доходов")
+
+    def import_expenses_sheet(self, df: pd.DataFrame):
+        """
+        Импортирует траты из листа 'траты'.
+        Структура: ОБЯЗАТЕЛЬНЫЕ ТРАТЫ | СКОЛЬКО | ДАТА | ВСЕГО
+        Пример: Оля врачи | 10000 | NaN | 13500
+        
+        Модель Expense имеет поля: user_id, amount, due_date, category, description, is_mandatory, is_completed
+        """
+        print(f"Импорт расходов из {len(df)} строк...")
+        
+        expenses_created = 0
+        
+        # Получаем ID первого пользователя (администратора)
+        from app.models import User
+        admin_user = self.db.query(User).first()
+        user_id = admin_user.id if admin_user else 1
+        
+        for _, row in df.iterrows():
+            # Пропускаем строки с менее чем 3 колонками
+            if len(row) < 3:
+                continue
+            
+            name = str(row.iloc[0]).strip() if pd.notna(row.iloc[0]) else ""
+            amount_val = row.iloc[1] if len(row) > 1 else None
+            date_val_raw = row.iloc[2] if len(row) > 2 else None
+            
+            # Пропускаем пустые строки или заголовки
+            if not name or pd.isna(amount_val):
+                continue
+            
+            # Парсим сумму
+            try:
+                amount_str = str(amount_val).replace(',', '.').replace(' ', '')
+                amount = float(amount_str)
+            except (ValueError, TypeError):
+                continue
+            
+            if amount <= 0:
+                continue
+            
+            # Парсим дату - может быть в любой колонке
+            date_val = self.normalize_date(date_val_raw)
+            
+            # Если дата не найдена во второй колонке, проверяем другие
+            if not date_val:
+                for i in range(2, min(len(row), 5)):
+                    date_val = self.normalize_date(row.iloc[i])
+                    if date_val:
+                        break
+            
+            # Если даты нет вообще - пропускаем (например, TOEFL с датой "неизвестно")
+            if not date_val:
+                continue
+            
+            # Определяем категорию и обязательность по названию
+            name_lower = name.lower()
+            category = ExpenseCategory.OTHER
+            is_mandatory = True
+            
+            if 'аренд' in name_lower:
+                category = ExpenseCategory.RENT
+            elif 'коммунал' in name_lower or 'свет' in name_lower or 'вода' in name_lower:
+                category = ExpenseCategory.UTILITIES
+            elif 'врач' in name_lower or 'мед' in name_lower or 'зуб' in name_lower or 'оля врач' in name_lower:
+                category = ExpenseCategory.MEDICAL
+            elif 'подар' in name_lower or 'др' in name_lower:
+                category = ExpenseCategory.GIFTS
+                is_mandatory = False
+            elif 'toefl' in name_lower or 'курс' in name_lower or 'учеб' in name_lower:
+                category = ExpenseCategory.EDUCATION
+            elif 'продукт' in name_lower or 'еда' in name_lower:
+                category = ExpenseCategory.FOOD
+            
+            expense = Expense(
+                user_id=user_id,
+                amount=amount,
+                due_date=date_val,
+                category=category,
+                description=name,
+                is_mandatory=is_mandatory,
+                is_completed=False
+            )
+            self.db.add(expense)
+            expenses_created += 1
+        
+        self.db.commit()
+        print(f"✅ Импортировано {expenses_created} расходов")
 
     def import_credit_cards_sheet(self, df: pd.DataFrame):
         """Импортирует льготные периоды"""
@@ -289,36 +402,72 @@ class ExcelImporter:
         """Импортирует недельный бюджет"""
         print(f"Импорт недельного бюджета...")
         
+        # Получаем ID первого пользователя (администратора)
+        from app.models import User
+        admin_user = self.db.query(User).first()
+        user_id = admin_user.id if admin_user else 1
+        
         # Структура: Месяц | Неделя 1 | Неделя 2 | ...
+        plans_created = 0
         for _, row in df.iterrows():
             month_str = str(row.iloc[0]).strip()
             if pd.isna(month_str) or len(month_str) < 3:
                 continue
             
-            # Парсим месяц (например, "Май 2026")
-            try:
-                month_date = datetime.strptime(month_str, "%B %Y")
-            except ValueError:
-                try:
-                    month_date = datetime.strptime(month_str, "%b %Y")
-                except ValueError:
-                    month_date = datetime.now()
+            # Парсим месяц (например, "МАЙ" или "Май 2026")
+            month_num = None
+            year = datetime.now().year
+            
+            month_lower = month_str.lower()
+            if 'май' in month_lower or 'may' in month_lower:
+                month_num = 5
+            elif 'июн' in month_lower or 'jun' in month_lower:
+                month_num = 6
+            elif 'июл' in month_lower or 'jul' in month_lower:
+                month_num = 7
+            elif 'авг' in month_lower or 'aug' in month_lower:
+                month_num = 8
+            elif 'сен' in month_lower or 'sep' in month_lower:
+                month_num = 9
+            elif 'окт' in month_lower or 'oct' in month_lower:
+                month_num = 10
+            elif 'ноя' in month_lower or 'nov' in month_lower:
+                month_num = 11
+            elif 'дек' in month_lower or 'dec' in month_lower:
+                month_num = 12
+            elif 'янв' in month_lower or 'jan' in month_lower:
+                month_num = 1
+            elif 'фев' in month_lower or 'feb' in month_lower:
+                month_num = 2
+            elif 'мар' in month_lower or 'mar' in month_lower:
+                month_num = 3
+            elif 'апр' in month_lower or 'apr' in month_lower:
+                month_num = 4
+            
+            if not month_num:
+                continue
             
             for i in range(1, 5): # 4 недели
                 if len(row) > i:
                     try:
-                        amount = float(str(row.iloc[i]).replace(',', '.').replace(' ', ''))
+                        amount_val = row.iloc[i]
+                        if pd.isna(amount_val):
+                            continue
+                        amount = float(str(amount_val).replace(',', '.').replace(' ', ''))
                         plan = WeeklyBudgetPlan(
-                            month=month_date,
+                            user_id=user_id,
+                            month=month_num,
+                            year=year,
                             week_number=i,
                             planned_amount=amount
                         )
                         self.db.add(plan)
+                        plans_created += 1
                     except (ValueError, TypeError):
                         pass
         
         self.db.commit()
-        print(f"✅ Импортировано недельных планов")
+        print(f"✅ Импортировано {plans_created} недельных планов")
 
     def run_full_import(self):
         """Запускает полный импорт всех листов"""

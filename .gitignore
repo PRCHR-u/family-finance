@@ -2,56 +2,30 @@
 # Database files
 *.db
 
-# Environment variables
+# Environment files
 .env
 .env.local
 *.env.*
 
-# Python specific
+# Dependencies
+.venv/
+venv/
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
-.Python
-*.so
-*.egg-info/
-.eggs/
 
-# Virtual environments
-venv/
-.venv/
-env/
-ENV/
+# Logs and temp files
+*.log
+*.tmp
+*.swp
 
-# Testing
-.coverage
-htmlcov/
-.nox/
-.tox/
-.pytest_cache/
-.hypothesis/
-
-# IDE and editor files
+# Editors
 .vscode/
 .idea/
-*.swp
-*.swo
-*.tmp
-
-# OS generated files
-.DS_Store
-Thumbs.db
-
-# Logs
-*.log
 
 # Build artifacts
 dist/
 build/
-*.out
-*.exe
-*.dll
-*.so
-*.a
-*.obj
+*.egg-info/
 ```
