@@ -200,6 +200,15 @@ class ExpenseCreate(BaseModel):
     is_completed: bool = False
 
 
+class ExpenseUpdate(BaseModel):
+    amount: float | None = Field(default=None, gt=0)
+    due_date: date | None = None
+    category: ExpenseCategory | None = None
+    description: str | None = Field(default=None, max_length=500)
+    is_mandatory: bool | None = None
+    is_completed: bool | None = None
+
+
 class ExpenseRead(ExpenseCreate):
     id: int
     user_id: int

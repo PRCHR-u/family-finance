@@ -46,6 +46,13 @@ const ExpensesPage = () => {
     }
   });
 
+  const approveMutation = useMutation({
+    mutationFn: expenseApi.approve,
+    onSuccess: () => {
+      queryClient.invalidateQueries(['expenses']);
+    }
+  });
+
   const deleteMutation = useMutation({
     mutationFn: expenseApi.delete,
     onSuccess: () => {
@@ -120,12 +127,7 @@ const ExpensesPage = () => {
   };
 
   const handleApprove = (id) => {
-    // Для подтверждения расхода используем approve API
-    expenseApi.approve(id).then(() => {
-      queryClient.invalidateQueries(['expenses']);
-    }).catch(err => {
-      console.error('Ошибка при подтверждении:', err);
-    });
+    approveMutation.mutate(id);
   };
 
   const handleReject = (id) => {

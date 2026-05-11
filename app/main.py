@@ -61,6 +61,7 @@ from .schemas import (
     DebtSummary,
     ExpenseCreate,
     ExpenseRead,
+    ExpenseUpdate,
     FamilyMemberRead,
     FamilyMembersResponse,
     FinanceRecordCreate,
@@ -1790,6 +1791,49 @@ def list_expenses(
     if is_mandatory is not None:
         stmt = stmt.where(Expense.is_mandatory == is_mandatory)
     return db.scalars(stmt.order_by(Expense.due_date.asc(), Expense.id.desc())).all()
+
+
+@app.put("/expenses/{expense_id}", response_model=ExpenseRead)
+def update_expense(
+    expense_id: int,
+    payload: ExpenseUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Обновить расход (изменения требуют подтверждения администратором)."""
+    expense = db.scalar(select(Expense).where(Expense.id == expense_id))
+    if not expense:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Расход не найден.")
+    
+    # Проверка доступа: админ может всё, остальные только свои
+    if current_user.role != UserRole.ADMIN and expense.user_id != current_user.id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Нет доступа к этому расходу.")
+    
+    # Обновляем поля
+    update_data = payload.model_dump(exclude_unset=True)
+    for key, value in update_data.items():
+        setattr(expense, key, value)
+    
+    # Если изменяет не администратор - ставим на модерацию
+    if current_user.role != UserRole.ADMIN:
+        expense.moderation_status = RecordStatus.PENDING
+        expense.approved_by_id = None
+        expense.approved_at = None
+    else:
+        expense.moderation_status = RecordStatus.APPROVED
+        expense.approved_by_id = current_user.id
+        expense.approved_at = datetime.utcnow()
+    
+    _log_action(
+        db,
+        "expenses.update",
+        actor_user_id=current_user.id,
+        target_user_id=expense.user_id,
+        details=f"expense_id={expense.id}, updates={update_data}",
+    )
+    db.commit()
+    db.refresh(expense)
+    return expense
 
 
 @app.post("/expenses/{expense_id}/approve", response_model=ExpenseRead)
