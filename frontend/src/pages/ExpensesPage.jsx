@@ -14,8 +14,7 @@ const ExpensesPage = () => {
     date: new Date().toISOString().split('T')[0],
     creditor_id: '',
     category: 'utilities',
-    is_completed: false,
-    is_planned: false
+    is_completed: false
   });
 
   const { data: expenses, isLoading } = useQuery({
@@ -69,6 +68,8 @@ const ExpensesPage = () => {
   });
 
   const isAdmin = localStorage.getItem('role') === 'admin';
+  const isFamilyAdmin = localStorage.getItem('role') === 'family_admin';
+  const canModerate = isAdmin || isFamilyAdmin;
 
   const resetForm = () => {
     setFormData({
@@ -77,8 +78,7 @@ const ExpensesPage = () => {
       date: new Date().toISOString().split('T')[0],
       creditor_id: '',
       category: 'utilities',
-      is_completed: false,
-      is_planned: false
+      is_completed: false
     });
   };
 
@@ -101,11 +101,10 @@ const ExpensesPage = () => {
     setFormData({
       amount: expense.amount.toString(),
       description: expense.description,
-      date: expense.date.split('T')[0],
+      date: expense.due_date ? expense.due_date.split('T')[0] : expense.date?.split('T')[0] || new Date().toISOString().split('T')[0],
       creditor_id: expense.creditor_id || '',
       category: expense.category,
-      is_completed: expense.is_completed,
-      is_planned: expense.is_planned
+      is_completed: expense.is_completed || false
     });
     setShowModal(true);
   };
@@ -120,15 +119,25 @@ const ExpensesPage = () => {
     completeMutation.mutate(id);
   };
 
+  const handleApprove = (id) => {
+    // Для подтверждения расхода используем approve API
+    expenseApi.approve(id).then(() => {
+      queryClient.invalidateQueries(['expenses']);
+    }).catch(err => {
+      console.error('Ошибка при подтверждении:', err);
+    });
+  };
+
   const handleReject = (id) => {
     rejectMutation.mutate(id);
   };
 
   const filteredExpenses = expenses?.filter(expense => {
     if (filterStatus === 'all') return true;
-    if (filterStatus === 'pending') return !expense.is_completed && expense.status === 'pending';
-    if (filterStatus === 'completed') return expense.is_completed;
-    if (filterStatus === 'rejected') return expense.status === 'rejected';
+    if (filterStatus === 'pending') return expense.moderation_status === 'pending';
+    if (filterStatus === 'completed') return expense.is_completed && expense.moderation_status === 'approved';
+    if (filterStatus === 'rejected') return expense.moderation_status === 'rejected';
+    if (filterStatus === 'planned') return !expense.is_completed && expense.moderation_status === 'approved';
     return true;
   });
 
@@ -159,6 +168,7 @@ const ExpensesPage = () => {
         >
           <option value="all">Все</option>
           <option value="pending">На модерации</option>
+          <option value="planned">Запланированные</option>
           <option value="completed">Выполненные</option>
           <option value="rejected">Отклоненные</option>
         </select>
@@ -182,7 +192,7 @@ const ExpensesPage = () => {
             {filteredExpenses?.map((expense) => (
               <tr key={expense.id} className="hover:bg-gray-50">
                 <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                  {new Date(expense.date).toLocaleDateString('ru-RU')}
+                  {new Date(expense.due_date || expense.date).toLocaleDateString('ru-RU')}
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                   {expense.amount.toFixed(2)} ₽
@@ -202,12 +212,14 @@ const ExpensesPage = () => {
                 <td className="px-6 py-4 whitespace-nowrap">
                   <span className={`px-2 py-1 text-xs rounded-full ${
                     expense.is_completed ? 'bg-green-100 text-green-800' :
-                    expense.status === 'rejected' ? 'bg-red-100 text-red-800' :
-                    'bg-yellow-100 text-yellow-800'
+                    expense.moderation_status === 'rejected' ? 'bg-red-100 text-red-800' :
+                    expense.moderation_status === 'pending' ? 'bg-yellow-100 text-yellow-800' :
+                    'bg-blue-100 text-blue-800'
                   }`}>
                     {expense.is_completed ? 'Выполнен' :
-                     expense.status === 'rejected' ? 'Отклонен' :
-                     'На модерации'}
+                     expense.moderation_status === 'rejected' ? 'Отклонен' :
+                     expense.moderation_status === 'pending' ? 'На модерации' :
+                     'Запланирован'}
                   </span>
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
@@ -217,14 +229,21 @@ const ExpensesPage = () => {
                   >
                     ✏️
                   </button>
-                  {isAdmin && !expense.is_completed && expense.status !== 'rejected' && (
+                  {canModerate && !expense.is_completed && expense.moderation_status !== 'rejected' && (
                     <>
                       <button
                         onClick={() => handleComplete(expense.id)}
                         className="text-green-600 hover:text-green-900 mr-3"
-                        title="Подтвердить"
+                        title="Отметить как выполненный"
                       >
                         ✓
+                      </button>
+                      <button
+                        onClick={() => handleApprove(expense.id)}
+                        className="text-emerald-600 hover:text-emerald-900 mr-3"
+                        title="Подтвердить"
+                      >
+                        👍
                       </button>
                       <button
                         onClick={() => handleReject(expense.id)}
@@ -321,11 +340,11 @@ const ExpensesPage = () => {
                 <label className="flex items-center">
                   <input
                     type="checkbox"
-                    checked={formData.is_planned}
-                    onChange={(e) => setFormData({...formData, is_planned: e.target.checked})}
+                    checked={formData.is_completed}
+                    onChange={(e) => setFormData({...formData, is_completed: e.target.checked})}
                     className="mr-2"
                   />
-                  <span className="text-sm text-gray-700">Планируемый расход</span>
+                  <span className="text-sm text-gray-700">Расход уже осуществлён</span>
                 </label>
               </div>
               <div className="flex justify-end gap-2">
