@@ -1,23 +1,23 @@
 import api from './axios';
 
 export const authService = {
-  login: async (username, password) => {
-    const response = await api.post('/auth/login', { username, password });
+  login: async (email, password) => {
+    const response = await api.post('/auth/login', { email, password });
     return response.data;
   },
 
-  register: async (username, password, full_name) => {
-    const response = await api.post('/auth/register', { username, password, full_name });
+  register: async (email, password, full_name, role = 'user') => {
+    const response = await api.post('/auth/register', { email, password, full_name, role });
     return response.data;
   },
 
   changePassword: async (old_password, new_password) => {
-    const response = await api.post('/auth/change-password', { old_password, new_password });
+    const response = await api.post('/users/change-password', { old_password, new_password });
     return response.data;
   },
 
   getCurrentUser: async () => {
-    const response = await api.get('/auth/me');
+    const response = await api.get('/users/me');
     return response.data;
   },
 };
@@ -57,6 +57,16 @@ export const debtService = {
     const response = await api.post(`/debts/${id}/reject`);
     return response.data;
   },
+
+  repay: async (debt_id, data) => {
+    const response = await api.post(`/debts/${debt_id}/repayments`, data);
+    return response.data;
+  },
+
+  getRepayments: async (debt_id) => {
+    const response = await api.get(`/debts/${debt_id}/repayments`);
+    return response.data;
+  },
 };
 
 export const expenseService = {
@@ -82,11 +92,6 @@ export const expenseService = {
 
   delete: async (id) => {
     const response = await api.delete(`/expenses/${id}`);
-    return response.data;
-  },
-
-  markComplete: async (id) => {
-    const response = await api.post(`/expenses/${id}/complete`);
     return response.data;
   },
 
@@ -132,8 +137,8 @@ export const incomeService = {
     return response.data;
   },
 
-  reject: async (id) => {
-    const response = await api.post(`/incomes/${id}/reject`);
+  markActual: async (id) => {
+    const response = await api.post(`/incomes/${id}/mark-actual`);
     return response.data;
   },
 };
@@ -177,12 +182,7 @@ export const creditCardService = {
 
 export const repaymentService = {
   getAll: async (params = {}) => {
-    const response = await api.get('/repayments', { params });
-    return response.data;
-  },
-
-  create: async (data) => {
-    const response = await api.post('/repayments', data);
+    const response = await api.get('/debts/repayments', { params });
     return response.data;
   },
 
@@ -203,13 +203,38 @@ export const analyticsService = {
     return response.data;
   },
 
+  getDebtChange: async (params = {}) => {
+    const response = await api.get('/analytics/debt-change', { params });
+    return response.data;
+  },
+
   getWeeklyBudget: async (params = {}) => {
     const response = await api.get('/analytics/weekly-budget', { params });
     return response.data;
   },
 
-  getBudgetAnalytics: async (params = {}) => {
-    const response = await api.get('/analytics/budget', { params });
+  getDailyBudget: async (params = {}) => {
+    const response = await api.get('/analytics/daily-budget', { params });
+    return response.data;
+  },
+
+  getBudgetSummary: async (params = {}) => {
+    const response = await api.get('/analytics/budget-summary', { params });
+    return response.data;
+  },
+
+  getDebtTimeline: async (params = {}) => {
+    const response = await api.get('/analytics/debt-timeline', { params });
+    return response.data;
+  },
+
+  getSeasonalDebt: async (params = {}) => {
+    const response = await api.get('/analytics/seasonal-debt', { params });
+    return response.data;
+  },
+
+  getYearlyDebt: async (params = {}) => {
+    const response = await api.get('/analytics/yearly-debt', { params });
     return response.data;
   },
 
@@ -220,6 +245,11 @@ export const analyticsService = {
 
   exportData: async () => {
     const response = await api.get('/analytics/export', { responseType: 'blob' });
+    return response.data;
+  },
+
+  getUrgentCreditCards: async () => {
+    const response = await api.get('/analytics/urgent-credit-cards');
     return response.data;
   },
 };
@@ -252,13 +282,18 @@ export const userService = {
     return response.data;
   },
 
-  toggleActive: async (id) => {
-    const response = await api.post(`/users/${id}/toggle-active`);
+  deactivate: async (id) => {
+    const response = await api.post(`/users/${id}/deactivate`);
     return response.data;
   },
 
-  setRole: async (id, role) => {
-    const response = await api.post(`/users/${id}/set-role`, { role });
+  activate: async (id) => {
+    const response = await api.post(`/users/${id}/activate`);
+    return response.data;
+  },
+
+  delete: async (id) => {
+    const response = await api.delete(`/users/${id}`);
     return response.data;
   },
 };
@@ -315,6 +350,54 @@ export const debtHistoryService = {
 
   getByCreditor: async (creditorName) => {
     const response = await api.get(`/debt-history/${encodeURIComponent(creditorName)}`);
+    return response.data;
+  },
+};
+
+export const importService = {
+  importExcel: async (formData) => {
+    const response = await api.post('/imports/excel', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+    return response.data;
+  },
+
+  importExcelFull: async (formData) => {
+    const response = await api.post('/imports/excel-full', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+    return response.data;
+  },
+
+  resetData: async () => {
+    const response = await api.post('/imports/excel-reset');
+    return response.data;
+  },
+};
+
+export const recordService = {
+  getAll: async (params = {}) => {
+    const response = await api.get('/records', { params });
+    return response.data;
+  },
+
+  create: async (data) => {
+    const response = await api.post('/records', data);
+    return response.data;
+  },
+
+  update: async (id, data) => {
+    const response = await api.put(`/records/${id}`, data);
+    return response.data;
+  },
+
+  approve: async (id) => {
+    const response = await api.post(`/records/${id}/approve`);
+    return response.data;
+  },
+
+  reject: async (id) => {
+    const response = await api.post(`/records/${id}/reject`);
     return response.data;
   },
 };
