@@ -1,7 +1,7 @@
+INFO:     Will watch for changes in these directories: ['/workspace']
+INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+INFO:     Started reloader process [2556] using WatchFiles
 OpenBLAS WARNING - could not determine the L2 cache size on this system, assuming 256k
-INFO:     Started server process [362]
+INFO:     Started server process [2563]
 INFO:     Waiting for application startup.
 INFO:     Application startup complete.
-INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
-База данных инициализирована успешно
-INFO:     127.0.0.1:45422 - "GET /docs HTTP/1.1" 200 OK
