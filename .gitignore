@@ -32,6 +32,7 @@ htmlcov/
 .pytest_cache/
 .mypy_cache/
 
+<<<<<<< HEAD
 # Virtual environments
 venv/
 .venv/
@@ -65,4 +66,12 @@ yarn-error.log*
 *.gz
 *.rar
 *.7z
+=======
+# Database
+family_finance.db
+
+# Logs
+*.log
+server.log
+>>>>>>> f9e7bf8c2e3109067bc662ab6428300a5b4026c9
 ```
