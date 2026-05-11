@@ -1793,10 +1793,16 @@ def list_expenses(
 
 
 @app.post("/expenses/{expense_id}/approve", response_model=ExpenseRead)
-def approve_expense(expense_id: int, db: Session = Depends(get_db), admin: User = Depends(require_admin)):
+def approve_expense(expense_id: int, db: Session = Depends(get_db), admin: User = Depends(require_family_admin)):
+    """Подтвердить расход (доступно ADMIN и FAMILY_ADMIN)."""
     expense = db.scalar(select(Expense).where(Expense.id == expense_id))
     if not expense:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Расход не найден.")
+    
+    # Проверка доступа: админ может всё, family_admin только в своей семье
+    if admin.role != UserRole.ADMIN and expense.user_id != admin.id and expense.user_id not in get_family_members_for_user(admin):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Нет доступа к этому расходу.")
+    
     expense.moderation_status = RecordStatus.APPROVED
     expense.approved_by_id = admin.id
     expense.approved_at = datetime.utcnow()
@@ -1813,11 +1819,16 @@ def approve_expense(expense_id: int, db: Session = Depends(get_db), admin: User 
 
 
 @app.post("/expenses/{expense_id}/reject", response_model=ExpenseRead)
-def reject_expense(expense_id: int, db: Session = Depends(get_db), admin: User = Depends(require_admin)):
-    """Отклонить изменение статуса расхода."""
+def reject_expense(expense_id: int, db: Session = Depends(get_db), admin: User = Depends(require_family_admin)):
+    """Отклонить изменение статуса расхода (доступно ADMIN и FAMILY_ADMIN)."""
     expense = db.scalar(select(Expense).where(Expense.id == expense_id))
     if not expense:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Расход не найден.")
+    
+    # Проверка доступа: админ может всё, family_admin только в своей семье
+    if admin.role != UserRole.ADMIN and expense.user_id != admin.id and expense.user_id not in get_family_members_for_user(admin):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Нет доступа к этому расходу.")
+    
     expense.moderation_status = RecordStatus.REJECTED
     expense.approved_by_id = admin.id
     expense.approved_at = datetime.utcnow()
