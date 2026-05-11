@@ -10,6 +10,7 @@ from .database import Base
 class UserRole(str, Enum):
     ADMIN = "admin"
     USER = "user"
+    FAMILY_ADMIN = "family_admin"  # Глава семьи
 
 
 class RecordStatus(str, Enum):
@@ -87,6 +88,11 @@ class User(Base):
     hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
     role: Mapped[UserRole] = mapped_column(SqlEnum(UserRole), nullable=False, default=UserRole.USER)
     is_active: Mapped[bool] = mapped_column(nullable=False, default=True)
+    
+    # Поля для семейной группы
+    family_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)  # Ссылка на главу семьи
+    family: Mapped["User | None"] = relationship("User", remote_side="User.id", back_populates="family_members")
+    family_members: Mapped[list["User"]] = relationship("User", back_populates="family", foreign_keys=[family_id])
 
     records: Mapped[list["FinanceRecord"]] = relationship(
         "FinanceRecord", back_populates="owner", foreign_keys="FinanceRecord.user_id"
