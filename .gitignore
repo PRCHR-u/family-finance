@@ -1,12 +1,14 @@
 ```
-# Compiled Python files
-*.pyc
+# Python
 __pycache__/
+*.pyc
+*.pyo
+*.pyd
 
-# Database files
-*.db
+# Database
+family_finance.db
 
-# Log files
+# Logs
 *.log
 server.log
 ```
