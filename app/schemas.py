@@ -36,8 +36,8 @@ class FamilyMemberRead(BaseModel):
 
 class FamilyMembersResponse(BaseModel):
     """Список членов семьи."""
-    family_admin: UserRead
-    members: list[FamilyMemberRead]
+    family_admin: UserRead | None = None
+    members: list[FamilyMemberRead] = []
 
 
 class LoginRequest(BaseModel):

@@ -827,8 +827,10 @@ def import_full_xlsx(
         if not target_user:
             raise ValueError("Целевой пользователь не найден.")
     else:
-        # Используем первого админа
+        # Используем первого админа или FAMILY_ADMIN
         target_user = db.scalar(select(User).where(User.role == UserRole.ADMIN))
+        if not target_user:
+            target_user = db.scalar(select(User).where(User.role == UserRole.FAMILY_ADMIN))
         if not target_user:
             raise ValueError("Администратор не найден.")
     
