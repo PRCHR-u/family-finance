@@ -44,13 +44,15 @@ class ExcelImporter:
         return None
 
     def normalize_creditor_name(self, name: str) -> str:
-        """Нормализует имена кредиторов"""
+        """Нормализует имена кредиторов, сохраняя уникальность"""
         if pd.isna(name):
             return "Unknown"
-        name = str(name).strip().upper()
-        # Убираем лишние слова
-        name = re.sub(r'\s*\(.*?\)\s*', '', name)
+        name = str(name).strip()
+        # Убираем лишние скобки и комментарии, но сохраняем основное имя
+        name = re.sub(r'\s*\([^)]*\)\s*', '', name)
         name = re.sub(r'\s+', ' ', name)
+        # Приводим к верхнему регистру для единообразия, но НЕ упрощаем имена
+        name = name.upper()
         return name
 
     def clear_existing_data(self):
@@ -421,7 +423,7 @@ class ExcelImporter:
                 if existing:
                     # Обновляем существующую запись
                     existing.planned_repayment_amount = repayment
-                          if date_val:
+                    if date_val:
                         existing.grace_end_date = date_val.date()
                 else:
                     # Создаём новую запись
@@ -487,7 +489,7 @@ class ExcelImporter:
             current_month = 1
         elif 'фев' in month_lower or 'feb' in month_lower:
             current_month = 2
-                    elif 'мар' in month_lower or 'mar' in month_lower:
+        elif 'мар' in month_lower or 'mar' in month_lower:
             current_month = 3
         elif 'апр' in month_lower or 'apr' in month_lower:
             current_month = 4

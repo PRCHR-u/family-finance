@@ -84,7 +84,7 @@ def parse_sheet1_debts(db: Session, target_user: User, admin: User, ws, overwrit
     # Известные названия кредиторов из файла (нормализованные)
     KNOWN_CREDITORS = {
         "СБЕР", "Т-БАНК", "ОЛЯ т-банк", "Оля СБЕР", "АЛЬФА", "МТС", "КРЕДИТ",
-        "копилка", "ОЛЯ", "МТС1", "МТС2", "копилка Оли"
+        "копилка", "ОЛЯ", "МТС1", "МТС2", "копилка Оли", "Оля копилка"
     }
     
     # Ключевые слова, которые НЕ являются кредиторами
@@ -98,11 +98,24 @@ def parse_sheet1_debts(db: Session, target_user: User, admin: User, ws, overwrit
     
     def normalize_creditor_name(name: str) -> str:
         """Нормализует название кредитора, удаляя имена людей."""
-        normalized = name.strip()
+        original_name = name.strip()
+        upper = original_name.upper()
+        
+        # Специальная обработка для копилок - сохраняем разделение между "копилка" и "Оля копилка"
+        if "КОПИЛКА" in upper:
+            # Проверяем, начинается ли с "Оля" или содержит "Оли"
+            if upper.startswith("ОЛЯ ") or upper.startswith("OLYA ") or "ОЛИ" in upper:
+                return "Оля копилка"
+            else:
+                return "копилка"
+        
+        # Для остальных кредиторов удаляем префиксы имён
+        normalized = original_name
         for prefix in NAME_PREFIXES:
             if normalized.startswith(prefix):
                 normalized = normalized[len(prefix):].strip()
                 break
+        
         # Приводим к стандартному формату
         upper = normalized.upper()
         if "Т-БАНК" in upper or "Т БАНК" in upper or "ТБ" in upper:
@@ -115,8 +128,7 @@ def parse_sheet1_debts(db: Session, target_user: User, admin: User, ws, overwrit
             return "МТС"
         elif "КРЕДИТ" in upper:
             return "КРЕДИТ"
-        elif "КОПИЛКА" in upper:
-            return "копилка"
+        
         return normalized
     
     # Находим все строки с датами и строки-заголовки
