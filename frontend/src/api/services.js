@@ -1,4 +1,4 @@
-import api from './axios';
+import api, { authApi } from './axios';
 
 export const authService = {
   async login(username, password) {
@@ -6,11 +6,7 @@ export const authService = {
     formData.append('username', username);
     formData.append('password', password);
 
-    const response = await this.api.post('/auth/login', formData.toString(), {
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded'
-      }
-    });
+    const response = await authApi.post('/auth/login', formData.toString());
     return response.data;
   },
 
